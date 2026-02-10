@@ -2,6 +2,7 @@ import os
 import random
 import asyncio
 import discord
+from config import get_answer_weight
 
 BASE_PATH = "assets/sounds"
 
@@ -31,19 +32,37 @@ def pick_random_from(path: str) -> str | None:
 
 
 def pick_weighted_ben_answer() -> str | None:
+    """
+    Pick a Ben answer based on configurable weights.
+
+    Weights are configured in config.py:
+    - "yes": weight for yes.mp3
+    - "no": weight for no.mp3
+    - "yapping": weight for EACH yapping file
+
+    Example: yes=10, no=10, yapping=2 with 5 yapping files
+    → Pool has 10 yes + 10 no + 10 yapping (2*5) = 30 total
+    → Yes: 33%, No: 33%, Yapping: 33% (distributed among 5 files)
+    """
     yes = os.path.join(ANSWER_PATH, "yes.mp3")
     no = os.path.join(ANSWER_PATH, "no.mp3")
     yaps = get_audio_files(YAPPING_PATH)
 
     weighted_pool: list[str] = []
 
+    # Add yes with configured weight
     if os.path.isfile(yes):
-        weighted_pool.extend([yes] * 10)
+        yes_weight = get_answer_weight("yes")
+        weighted_pool.extend([yes] * yes_weight)
 
+    # Add no with configured weight
     if os.path.isfile(no):
-        weighted_pool.extend([no] * 10)
+        no_weight = get_answer_weight("no")
+        weighted_pool.extend([no] * no_weight)
 
-    weighted_pool.extend(yaps * 2)
+    # Add each yapping file with configured weight
+    yapping_weight = get_answer_weight("yapping")
+    weighted_pool.extend(yaps * yapping_weight)
 
     if not weighted_pool:
         return None

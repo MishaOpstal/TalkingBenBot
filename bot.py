@@ -3,15 +3,17 @@ import asyncio
 import discord
 from discord import option
 
-from config import voice_enabled
+from config import voice_enabled, answer_weights, get_answer_weight, set_answer_weight, save_config, load_config
 from audio import (
     CALL_PATH,
     HANG_UP_PATH,
+    YAPPING_PATH,
     pick_random_from,
     pick_weighted_ben_answer,
     play_mp3,
     play_mp3_sequence,
     ensure_unsuppressed,
+    get_audio_files,
 )
 from voice_watch import BenSink, monitor_silence
 
@@ -49,10 +51,10 @@ def ensure_opus_loaded() -> None:
 
 ensure_opus_loaded()
 
+
 # ─────────────────────────────────────────────
 # Startup cleanup: remove ghost voice sessions
 # ─────────────────────────────────────────────
-from config import load_config
 
 
 @bot.event
@@ -95,7 +97,6 @@ async def ask(ctx: discord.ApplicationContext, question: str):
 # ─────────────────────────────────────────────
 # Config
 # ─────────────────────────────────────────────
-from config import voice_enabled, save_config
 
 
 @bot.slash_command(description="Enable/disable voice-triggered Ben answers.")
@@ -112,15 +113,101 @@ async def config(ctx: discord.ApplicationContext, voicetalktoben: bool):
 
 
 # ─────────────────────────────────────────────
+# Answer Weight Configuration
+# ─────────────────────────────────────────────
+@bot.slash_command(description="Configure the probability weights for Ben's answers.")
+@option("yes_weight", int, description="Weight for 'yes' answer (0-100, default: 10)", min_value=0, max_value=100,
+        required=False)
+@option("no_weight", int, description="Weight for 'no' answer (0-100, default: 10)", min_value=0, max_value=100,
+        required=False)
+@option("yapping_weight", int, description="Weight for EACH yapping file (0-100, default: 2)", min_value=0,
+        max_value=100, required=False)
+async def weights(
+        ctx: discord.ApplicationContext,
+        yes_weight: int = None,
+        no_weight: int = None,
+        yapping_weight: int = None
+):
+    """
+    Configure answer probability weights.
+
+    Higher weight = more likely to be chosen.
+    The final probability is: weight / (sum of all weights)
+
+    Example with 5 yapping files:
+    - yes=10, no=10, yapping=2 → yes: 33%, no: 33%, yapping: 33%
+    - yes=20, no=5, yapping=1 → yes: 57%, no: 14%, yapping: 29%
+    - yes=0, no=0, yapping=10 → yes: 0%, no: 0%, yapping: 100%
+    """
+    await ctx.defer(ephemeral=True)
+
+    # Update weights if provided
+    if yes_weight is not None:
+        set_answer_weight("yes", yes_weight)
+    if no_weight is not None:
+        set_answer_weight("no", no_weight)
+    if yapping_weight is not None:
+        set_answer_weight("yapping", yapping_weight)
+
+    # Get current weights
+    yes = get_answer_weight("yes")
+    no = get_answer_weight("no")
+    yapping = get_answer_weight("yapping")
+
+    # Calculate probabilities
+    yap_count = len(get_audio_files(YAPPING_PATH))
+    total = yes + no + (yapping * yap_count)
+
+    if total == 0:
+        yes_pct = no_pct = yap_pct = 0
+    else:
+        yes_pct = (yes / total) * 100
+        no_pct = (no / total) * 100
+        yap_pct = ((yapping * yap_count) / total) * 100
+
+    response = (
+        f"**Ben's Answer Weights**\n\n"
+        f"🟢 **Yes**: {yes} → {yes_pct:.1f}%\n"
+        f"🔴 **No**: {no} → {no_pct:.1f}%\n"
+        f"💬 **Yapping**: {yapping} per file ({yap_count} files) → {yap_pct:.1f}%\n\n"
+        f"*Total weight pool: {total}*"
+    )
+
+    await ctx.followup.send(response)
+
+
+# ─────────────────────────────────────────────
 # Status
 # ─────────────────────────────────────────────
 @bot.slash_command(description="Show current Talking Ben settings.")
 async def ben_status(ctx):
     enabled = voice_enabled.get(ctx.guild_id, False)
-    await ctx.respond(
-        f"🎙 voiceTalkToBen is currently **{enabled}**",
-        ephemeral=True
+
+    # Get weights
+    yes = get_answer_weight("yes")
+    no = get_answer_weight("no")
+    yapping = get_answer_weight("yapping")
+    yap_count = len(get_audio_files(YAPPING_PATH))
+
+    # Calculate probabilities
+    total = yes + no + (yapping * yap_count)
+    if total == 0:
+        yes_pct = no_pct = yap_pct = 0
+    else:
+        yes_pct = (yes / total) * 100
+        no_pct = (no / total) * 100
+        yap_pct = ((yapping * yap_count) / total) * 100
+
+    response = (
+        f"**Talking Ben Status**\n\n"
+        f"🎙 **voiceTalkToBen**: {enabled}\n\n"
+        f"**Answer Probabilities:**\n"
+        f"🟢 Yes: {yes_pct:.1f}%\n"
+        f"🔴 No: {no_pct:.1f}%\n"
+        f"💬 Yapping: {yap_pct:.1f}%\n"
     )
+
+    await ctx.respond(response, ephemeral=True)
 
 
 # ─────────────────────────────────────────────
