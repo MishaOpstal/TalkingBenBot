@@ -100,8 +100,6 @@ async def ensure_unsuppressed(guild: discord.Guild) -> bool:
     if not me or not me.voice or not isinstance(me.voice.channel, discord.StageChannel):
         return True
 
-    stage_channel = me.voice.channel
-
     # Check permissions: Mute Members is required to unsuppress oneself
     if not me.guild_permissions.mute_members:
         print(f"[Stage Error] Missing 'Mute Members' permission in {guild.name} to unsuppress.")
@@ -110,9 +108,8 @@ async def ensure_unsuppressed(guild: discord.Guild) -> bool:
     try:
         # CRITICAL: Request to speak on the stage
         # This is what enables audio output in Stage Channels
-        if stage_channel.instance:
-            await stage_channel.instance.request_to_speak()
-            print(f"[Stage] Requested to speak in {guild.name}")
+        await me.request_to_speak()
+        print(f"[Stage] Requested to speak in {guild.name}")
 
         # Unsuppress (become a speaker) if currently suppressed
         if me.voice.suppress:
@@ -132,17 +129,6 @@ async def ensure_unsuppressed(guild: discord.Guild) -> bool:
     except discord.Forbidden:
         print(f"[Stage Error] 403 Forbidden when unsuppressing in {guild.name}. Missing Access.")
         return False
-    except AttributeError as e:
-        # If stage_channel.instance is None (no active stage), try just unsuppressing
-        print(f"[Stage Warning] No active stage instance in {guild.name}: {e}")
-        try:
-            if me.voice and me.voice.suppress:
-                await me.edit(suppress=False)
-                await asyncio.sleep(0.5)
-            return True
-        except Exception as fallback_e:
-            print(f"[Stage Error] Failed fallback unsuppress: {fallback_e}")
-            return False
     except Exception as e:
         print(f"[Stage Error] Failed to request speak/unsuppress in {guild.name}: {e}")
         return False
