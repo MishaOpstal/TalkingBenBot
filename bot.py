@@ -170,7 +170,7 @@ async def call(ctx: discord.ApplicationContext):
         except Exception:
             pass
 
-    await join_call(channel, vc)
+    await join_call(channel, vc, ctx.guild_id, ctx)
 
 
 # ─────────────────────────────────────────────

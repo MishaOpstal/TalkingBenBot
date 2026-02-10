@@ -16,6 +16,7 @@ from voice_call.listener import start_listening
 async def join_call(
         channel: discord.VoiceChannel | discord.StageChannel,
         vc: discord.VoiceClient,
+        guild_id: int,
         ctx: discord.ApplicationContext = None
 ):
     # ── Heal ghost connections ──
@@ -69,7 +70,7 @@ async def join_call(
             await ctx.followup.send("❌ Failed to connect to voice channel.")
         return
 
-    if not await start_listening(vc, ctx):
+    if not await start_listening(vc, guild_id, ctx):
         return
 
     if ctx:
@@ -96,7 +97,7 @@ async def reconnect_call(bot: discord.Bot):
         # Get or create voice client
         vc = guild.voice_client
 
-        await join_call(channel, vc)
+        await join_call(channel, vc, guild.id)
 
 
 async def leave_call(vc: discord.VoiceClient):
