@@ -173,11 +173,19 @@ async def call(ctx: discord.ApplicationContext):
     # ── Handle Stage Channel Join ──
     is_stage = isinstance(channel, discord.StageChannel)
     if is_stage:
+        print(f"[Stage] Joined stage channel, ensuring speaker status...")
+        # Give Discord a moment to process the connection
+        await asyncio.sleep(0.5)
+
         success = await ensure_unsuppressed(ctx.guild)
         if not success:
-            print("[Stage Warning] Could not unsuppress Ben. Audio might fail.")
-        # Longer wait for Stage Channel to fully establish speaker state
-        await asyncio.sleep(2.0)
+            print("[Stage Warning] Could not become speaker. Audio might fail.")
+            await ctx.followup.send(
+                "⚠️ Ben joined but may not be able to speak. Try manually promoting him to speaker.")
+
+        # Extra wait for Stage Channel to fully establish speaker state
+        # This is critical - stage channels need time to propagate permissions
+        await asyncio.sleep(1.5)
 
     # ── Play call sequence (ORDERED, FULL PATHS) ──
     call_sequence = sorted(
@@ -193,7 +201,7 @@ async def call(ctx: discord.ApplicationContext):
         # This prevents the recording from interfering with playback
         if is_stage:
             # Extra delay for Stage Channels to ensure audio completed
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.8)
 
     # ── Start listening ──
     async def finished_callback(sink, *args):
@@ -286,7 +294,8 @@ async def on_voice_state_update(member, before, after):
 
                     # ── Handle Stage Channel Move ──
                     if isinstance(after.channel, discord.StageChannel):
-                        # Give it an extra moment and then try to unsuppress
+                        print(f"[Stage] Moved to stage channel, ensuring speaker status...")
+                        # Give it time to process the move
                         await asyncio.sleep(0.5)
                         await ensure_unsuppressed(member.guild)
                         # Extra wait for stage to stabilize
@@ -313,10 +322,16 @@ async def on_voice_state_update(member, before, after):
                 except Exception as e:
                     print(f"Error during bot move recording restart: {e}")
         elif before.suppress != after.suppress:
-            # Suppression state changed, but bot is still in the same channel.
-            # We don't want to restart recording here to avoid loops in Stage Channels.
-            print(
-                f"Bot suppression changed from {before.suppress} to {after.suppress} in {after.channel}. Skipping recording restart.")
+            # Suppression state changed
+            print(f"[Stage] Suppression changed from {before.suppress} to {after.suppress} in {after.channel.name}")
+
+            # If we got suppressed (moved to audience), try to unsuppress
+            if after.suppress and isinstance(after.channel, discord.StageChannel):
+                print(f"[Stage] Bot was suppressed, attempting to regain speaker status...")
+                await asyncio.sleep(0.3)
+                await ensure_unsuppressed(member.guild)
+
+            # Don't restart recording on suppression changes to avoid loops
             return
 
     # Ignore bot's own events for the "empty VC" logic

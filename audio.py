@@ -93,8 +93,11 @@ async def play_mp3_sequence(vc: discord.VoiceClient, files: list[str]) -> None:
 
 async def ensure_unsuppressed(guild: discord.Guild) -> bool:
     """
-    Ensures the bot is unsuppressed in a Stage Channel and requests to speak.
+    Ensures the bot is unsuppressed in a Stage Channel and can speak.
     Returns True if unsuppressed or not in a stage channel, False if it failed.
+
+    CRITICAL: Only call request_to_speak() when suppressed (in audience).
+    Calling it when already a speaker makes you raise your hand and go back to audience!
     """
     me = guild.me
     if not me or not me.voice or not isinstance(me.voice.channel, discord.StageChannel):
@@ -106,29 +109,59 @@ async def ensure_unsuppressed(guild: discord.Guild) -> bool:
         return False
 
     try:
-        # CRITICAL: Request to speak on the stage
-        # This is what enables audio output in Stage Channels
-        await me.request_to_speak()
-        print(f"[Stage] Requested to speak in {guild.name}")
+        # Refresh member state to ensure we have current info
+        await asyncio.sleep(0.1)
+        me = guild.me
 
-        # Unsuppress (become a speaker) if currently suppressed
-        if me.voice.suppress:
+        # If already unsuppressed (already a speaker), we're done!
+        if me.voice and not me.voice.suppress:
+            print(f"[Stage] Already a speaker in {guild.name}")
+            return True
+
+        print(f"[Stage] Currently suppressed in {guild.name}, becoming speaker...")
+
+        # CRITICAL FIX: Only request to speak if we're currently suppressed
+        # This prevents the "raise hand" loop
+        if me.voice and me.voice.suppress:
+            # First, try to directly unsuppress with Mute Members permission
+            # This is more reliable than request_to_speak() for bots
             await me.edit(suppress=False)
-            print(f"[Stage] Unsuppressed in {guild.name}")
+            print(f"[Stage] Edited suppress=False in {guild.name}")
 
-        # Wait a bit for the state to propagate
-        for _ in range(15):  # Increased wait iterations for stage channels
-            if me.voice and not me.voice.suppress:
-                # Double-check we can actually speak
+            # Wait for the state to propagate
+            for i in range(25):  # Give it up to 2.5 seconds
                 await asyncio.sleep(0.1)
-                return True
-            await asyncio.sleep(0.1)
+                me = guild.me  # Refresh member object
+                if me.voice and not me.voice.suppress:
+                    print(f"[Stage] Successfully became speaker in {guild.name}")
+                    return True
 
-        return not me.voice.suppress if me.voice else False
+            # If direct unsuppress didn't work, try request_to_speak as fallback
+            print(f"[Stage] Direct unsuppress didn't work, trying request_to_speak...")
+            await me.request_to_speak()
+            await asyncio.sleep(0.3)
+
+            # Try editing again
+            me = guild.me
+            if me.voice and me.voice.suppress:
+                await me.edit(suppress=False)
+
+            # Final wait
+            for i in range(15):
+                await asyncio.sleep(0.1)
+                me = guild.me
+                if me.voice and not me.voice.suppress:
+                    print(f"[Stage] Successfully became speaker (via request) in {guild.name}")
+                    return True
+
+        me = guild.me
+        final_state = not me.voice.suppress if me.voice else False
+        print(f"[Stage] Final speaker state in {guild.name}: {final_state}")
+        return final_state
 
     except discord.Forbidden:
-        print(f"[Stage Error] 403 Forbidden when unsuppressing in {guild.name}. Missing Access.")
+        print(f"[Stage Error] 403 Forbidden when unsuppressing in {guild.name}. Missing permissions.")
         return False
     except Exception as e:
-        print(f"[Stage Error] Failed to request speak/unsuppress in {guild.name}: {e}")
+        print(f"[Stage Error] Failed to unsuppress in {guild.name}: {e}")
         return False
