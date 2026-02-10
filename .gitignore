@@ -1,0 +1,16 @@
+# Environment
+.env
+.venv
+
+# Voice models
+models/**
+
+# Python
+__pycache__/**
+
+# IDE
+.vscode/**
+.idea/**
+
+# Data
+data/**

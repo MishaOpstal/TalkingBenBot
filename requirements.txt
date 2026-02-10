@@ -1,0 +1,6 @@
+py-cord[voice]==2.7.1
+PyNaCl==1.6.2
+vosk==0.3.45
+
+pygame
+keyboard

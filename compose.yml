@@ -1,0 +1,15 @@
+services:
+  talking-ben:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: talking-ben-bot
+    container_name: talking-ben
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    volumes:
+      - ./assets:/app/assets:ro
+      - ./data:/app/data
