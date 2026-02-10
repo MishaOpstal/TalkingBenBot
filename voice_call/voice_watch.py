@@ -19,7 +19,7 @@ from helpers.config_helper import get_config
 # Tunables
 # ─────────────────────────────────────────────
 MIN_SPEECH_SECONDS = 0.6
-SILENCE_SECONDS = 1.0
+SILENCE_SECONDS = 0.35
 CHECK_INTERVAL = 0.03
 MAX_IDLE_AFTER_WAKE = 5.0
 
