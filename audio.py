@@ -1,26 +1,11 @@
+import asyncio
 import os
 import random
-import asyncio
+
 import discord
-from config import get_answer_weight
 
-BASE_PATH = "assets/sounds"
-
-CALL_PATH = os.path.join(BASE_PATH, "telephone", "call")
-HANG_UP_PATH = os.path.join(BASE_PATH, "telephone", "hang_up")
-ANSWER_PATH = os.path.join(BASE_PATH, "answers")
-YAPPING_PATH = os.path.join(BASE_PATH, "yapping")
-
-
-def get_audio_files(path: str) -> list[str]:
-    if not os.path.isdir(path):
-        return []
-
-    return [
-        os.path.join(path, f)
-        for f in os.listdir(path)
-        if f.lower().endswith(".mp3")
-    ]
+from helpers.audio_helper import get_audio_files, ANSWER_PATH, YAPPING_PATH
+from helpers.config_helper import get_config
 
 
 def pick_random_from(path: str) -> str | None:
@@ -31,7 +16,7 @@ def pick_random_from(path: str) -> str | None:
     return random.choice(files)
 
 
-def pick_weighted_ben_answer() -> str | None:
+def pick_weighted_ben_answer(guild_id: int) -> str | None:
     """
     Pick a Ben answer based on configurable weights.
 
@@ -50,18 +35,20 @@ def pick_weighted_ben_answer() -> str | None:
 
     weighted_pool: list[str] = []
 
+    cfg = get_config(guild_id)
+
     # Add yes with configured weight
     if os.path.isfile(yes):
-        yes_weight = get_answer_weight("yes")
+        yes_weight = cfg.yes_weight
         weighted_pool.extend([yes] * yes_weight)
 
     # Add no with configured weight
     if os.path.isfile(no):
-        no_weight = get_answer_weight("no")
+        no_weight = cfg.no_weight
         weighted_pool.extend([no] * no_weight)
 
     # Add each yapping file with configured weight
-    yapping_weight = get_answer_weight("yapping")
+    yapping_weight = cfg.yapping_weight
     weighted_pool.extend(yaps * yapping_weight)
 
     if not weighted_pool:

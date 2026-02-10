@@ -14,10 +14,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY assets ./assets
 COPY models ./models
+COPY voice_call .
+COPY helpers .
 COPY bot.py .
 COPY audio.py .
 COPY config.py .
-COPY voice_watch.py .
 
 ENV PYTHONUNBUFFERED=1
 

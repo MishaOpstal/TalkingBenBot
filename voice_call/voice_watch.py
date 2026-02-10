@@ -1,14 +1,17 @@
 import asyncio
+import audioop
 import json
 import math
+import random
 import struct
 import time
-import audioop
+
 import discord
 from vosk import Model, KaldiRecognizer
 
-from config import voice_enabled
 from audio import pick_weighted_ben_answer, play_mp3
+from bot import leave_call
+from helpers.config_helper import get_config
 
 # ─────────────────────────────────────────────
 # Tunables
@@ -19,7 +22,7 @@ CHECK_INTERVAL = 0.03
 MAX_IDLE_AFTER_WAKE = 5.0
 
 WAKE_WORDS = ("then", "ben", "hey ben", "hi ben", "hello ben", "hallo ben")
-VOSK_MODEL_PATH = "models/vosk"
+VOSK_MODEL_PATH = "../models/vosk"
 
 # ─────────────────────────────────────────────
 # Load Vosk once
@@ -44,6 +47,7 @@ class BenSink(discord.sinks.Sink):
         super().__init__(filters=None)
         self.guild_id = guild_id
         self.reset_session(full=True)
+        self.config = get_config(guild_id)
 
     # ───────── Helpers ─────────
     def _new_recognizer(self):
@@ -86,7 +90,6 @@ class BenSink(discord.sinks.Sink):
         # ─────────────────────────
         # Recognition (always running)
         # ─────────────────────────
-        text = ""
 
         if self.recognizer.AcceptWaveform(mono_16k):
             result = json.loads(self.recognizer.Result())
@@ -99,9 +102,9 @@ class BenSink(discord.sinks.Sink):
         # Wake word detection
         # ─────────────────────────
         if (
-            voice_enabled.get(self.guild_id, False)
-            and not self.ben_activated
-            and any(w in text for w in WAKE_WORDS)
+                self.config.voice_enabled
+                and not self.ben_activated
+                and any(w in text for w in WAKE_WORDS)
         ):
             print(f"[WakeWord] Activated by user {user_id}")
             self.ben_activated = True
@@ -146,10 +149,12 @@ class BenSink(discord.sinks.Sink):
 
 
 async def monitor_silence(
-    guild_id: int,
-    vc: discord.VoiceClient,
-    sink: BenSink
+        guild_id: int,
+        vc: discord.VoiceClient,
+        sink: BenSink
 ):
+    cfg = get_config(guild_id)
+
     while vc.is_connected():
         await asyncio.sleep(CHECK_INTERVAL)
 
@@ -158,7 +163,7 @@ async def monitor_silence(
             print(f"[Monitor] Recording stopped for guild {guild_id}. Terminating monitor task.")
             break
 
-        if not voice_enabled.get(guild_id, False):
+        if not cfg.voice_enabled:
             continue
         if vc.is_playing():
             continue
@@ -187,9 +192,18 @@ async def monitor_silence(
             continue
 
         # ─────────────────────────
+        # 1 in 500 chance he just hangs up
+        # ─────────────────────────
+        random_chance: int = random.randint(0, 500)
+        if random_chance == 250:
+            sink.reset_session(full=True)
+            await leave_call(vc)
+            continue
+
+        # ─────────────────────────
         # Ben answers (never interruptible)
         # ─────────────────────────
-        answer = pick_weighted_ben_answer()
+        answer = pick_weighted_ben_answer(guild_id)
         if answer:
             await play_mp3(vc, answer)
 
