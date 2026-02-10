@@ -48,6 +48,7 @@ class BenSink(discord.sinks.Sink):
     def __init__(self, context_id: Union[int, str]):
         super().__init__(filters=None)
         self.context_id = context_id
+        self.monitor_task = None  # Track the monitor task
         self.reset_session(full=True)
         self.config = get_config(context_id)
 
@@ -73,6 +74,15 @@ class BenSink(discord.sinks.Sink):
 
         if full:
             self.recognizer = self._new_recognizer()
+
+    def cleanup(self):
+        """Clean up resources when sink is no longer needed"""
+        if self.monitor_task:
+            self.monitor_task.cancel()
+        # The recognizer should be garbage collected automatically
+        # but we can explicitly delete it to be safe
+        if hasattr(self, 'recognizer'):
+            del self.recognizer
 
     # ───────── Audio Input ─────────
     def write(self, pcm: bytes, user_id: int) -> None:

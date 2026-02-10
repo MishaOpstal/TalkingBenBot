@@ -110,11 +110,16 @@ async def leave_call(vc: discord.VoiceClient):
         await play_mp3(vc, hang)
 
     try:
+        # Clean up the sink before stopping recording
+        if hasattr(vc, 'sink') and vc.sink:
+            if hasattr(vc.sink, 'cleanup'):
+                vc.sink.cleanup()
+
         vc.stop_recording()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[Leave] Error stopping recording: {e}")
 
     try:
         await vc.disconnect(force=True)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[Leave] Error disconnecting: {e}")
