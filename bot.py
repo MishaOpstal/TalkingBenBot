@@ -25,6 +25,7 @@ intents.members = True
 
 bot = discord.Bot(intents=intents)
 
+
 def ensure_opus_loaded() -> None:
     if discord.opus.is_loaded():
         return
@@ -45,12 +46,14 @@ def ensure_opus_loaded() -> None:
 
     raise RuntimeError("Opus library not found. Install libopus0 / opus package.")
 
+
 ensure_opus_loaded()
 
 # ─────────────────────────────────────────────
 # Startup cleanup: remove ghost voice sessions
 # ─────────────────────────────────────────────
 from config import load_config
+
 
 @bot.event
 async def on_ready():
@@ -65,7 +68,6 @@ async def on_ready():
                 pass
 
     print(f"Logged in as {bot.user}")
-
 
 
 # ─────────────────────────────────────────────
@@ -94,6 +96,7 @@ async def ask(ctx: discord.ApplicationContext, question: str):
 # Config
 # ─────────────────────────────────────────────
 from config import voice_enabled, save_config
+
 
 @bot.slash_command(description="Enable/disable voice-triggered Ben answers.")
 @option("voicetalktoben", bool, description="True / False")
@@ -168,12 +171,13 @@ async def call(ctx: discord.ApplicationContext):
         await vc.move_to(channel)
 
     # ── Handle Stage Channel Join ──
-    if isinstance(channel, discord.StageChannel):
+    is_stage = isinstance(channel, discord.StageChannel)
+    if is_stage:
         success = await ensure_unsuppressed(ctx.guild)
         if not success:
-            print("[Stage Warning] Could not unsuppress Ben. Recording might fail.")
-        # Extra wait for Stage Channel stability
-        await asyncio.sleep(1.0)
+            print("[Stage Warning] Could not unsuppress Ben. Audio might fail.")
+        # Longer wait for Stage Channel to fully establish speaker state
+        await asyncio.sleep(2.0)
 
     # ── Play call sequence (ORDERED, FULL PATHS) ──
     call_sequence = sorted(
@@ -184,6 +188,12 @@ async def call(ctx: discord.ApplicationContext):
 
     if call_sequence:
         await play_mp3_sequence(vc, call_sequence)
+
+        # CRITICAL: Wait for audio to finish before starting recording
+        # This prevents the recording from interfering with playback
+        if is_stage:
+            # Extra delay for Stage Channels to ensure audio completed
+            await asyncio.sleep(1.0)
 
     # ── Start listening ──
     async def finished_callback(sink, *args):
@@ -270,7 +280,7 @@ async def on_voice_state_update(member, before, after):
                 try:
                     if getattr(vc, "recording", False):
                         vc.stop_recording()
-                    
+
                     # Wait a bit for the voice connection to stabilize after move
                     await asyncio.sleep(1.0)
 
@@ -279,6 +289,8 @@ async def on_voice_state_update(member, before, after):
                         # Give it an extra moment and then try to unsuppress
                         await asyncio.sleep(0.5)
                         await ensure_unsuppressed(member.guild)
+                        # Extra wait for stage to stabilize
+                        await asyncio.sleep(1.5)
 
                     if not vc.is_connected():
                         return
@@ -291,11 +303,11 @@ async def on_voice_state_update(member, before, after):
                         vc.start_recording(sink, finished_callback)
                     except Exception as e:
                         if "Already recording" in str(e):
-                             # This can happen if start_recording was called twice rapidly
-                             pass
+                            # This can happen if start_recording was called twice rapidly
+                            pass
                         else:
-                             print(f"[Recording Error in Move] {e}")
-                             return
+                            print(f"[Recording Error in Move] {e}")
+                            return
 
                     asyncio.create_task(monitor_silence(member.guild.id, vc, sink))
                 except Exception as e:
@@ -303,7 +315,8 @@ async def on_voice_state_update(member, before, after):
         elif before.suppress != after.suppress:
             # Suppression state changed, but bot is still in the same channel.
             # We don't want to restart recording here to avoid loops in Stage Channels.
-            print(f"Bot suppression changed from {before.suppress} to {after.suppress} in {after.channel}. Skipping recording restart.")
+            print(
+                f"Bot suppression changed from {before.suppress} to {after.suppress} in {after.channel}. Skipping recording restart.")
             return
 
     # Ignore bot's own events for the "empty VC" logic

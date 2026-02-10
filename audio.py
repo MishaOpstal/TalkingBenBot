@@ -93,15 +93,14 @@ async def play_mp3_sequence(vc: discord.VoiceClient, files: list[str]) -> None:
 
 async def ensure_unsuppressed(guild: discord.Guild) -> bool:
     """
-    Ensures the bot is unsuppressed in a Stage Channel.
+    Ensures the bot is unsuppressed in a Stage Channel and requests to speak.
     Returns True if unsuppressed or not in a stage channel, False if it failed.
     """
     me = guild.me
     if not me or not me.voice or not isinstance(me.voice.channel, discord.StageChannel):
         return True
 
-    if not me.voice.suppress:
-        return True
+    stage_channel = me.voice.channel
 
     # Check permissions: Mute Members is required to unsuppress oneself
     if not me.guild_permissions.mute_members:
@@ -109,16 +108,41 @@ async def ensure_unsuppressed(guild: discord.Guild) -> bool:
         return False
 
     try:
-        await me.edit(suppress=False)
+        # CRITICAL: Request to speak on the stage
+        # This is what enables audio output in Stage Channels
+        if stage_channel.instance:
+            await stage_channel.instance.request_to_speak()
+            print(f"[Stage] Requested to speak in {guild.name}")
+
+        # Unsuppress (become a speaker) if currently suppressed
+        if me.voice.suppress:
+            await me.edit(suppress=False)
+            print(f"[Stage] Unsuppressed in {guild.name}")
+
         # Wait a bit for the state to propagate
-        for _ in range(10):
+        for _ in range(15):  # Increased wait iterations for stage channels
             if me.voice and not me.voice.suppress:
+                # Double-check we can actually speak
+                await asyncio.sleep(0.1)
                 return True
             await asyncio.sleep(0.1)
+
         return not me.voice.suppress if me.voice else False
+
     except discord.Forbidden:
         print(f"[Stage Error] 403 Forbidden when unsuppressing in {guild.name}. Missing Access.")
         return False
+    except AttributeError as e:
+        # If stage_channel.instance is None (no active stage), try just unsuppressing
+        print(f"[Stage Warning] No active stage instance in {guild.name}: {e}")
+        try:
+            if me.voice and me.voice.suppress:
+                await me.edit(suppress=False)
+                await asyncio.sleep(0.5)
+            return True
+        except Exception as fallback_e:
+            print(f"[Stage Error] Failed fallback unsuppress: {fallback_e}")
+            return False
     except Exception as e:
-        print(f"[Stage Error] Failed to unsuppress in {guild.name}: {e}")
+        print(f"[Stage Error] Failed to request speak/unsuppress in {guild.name}: {e}")
         return False
