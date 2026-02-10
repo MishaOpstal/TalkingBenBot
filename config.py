@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Dict
+from typing import Dict, Union
 
 CONFIG_PATH = "data/config.json"
 
@@ -17,30 +17,46 @@ class ConfigValidationError(Exception):
 
 class ConfigOptions:
     def __init__(self) -> None:
-        self.voice_enabled: Dict[int, bool] = {}
-        self.answer_weights: Dict[int, Dict[str, int]] = {}
+        self.voice_enabled: Dict[str, bool] = {}
+        self.answer_weights: Dict[str, Dict[str, int]] = {}
+
+    # ───────────── ID Helpers ─────────────
+
+    @staticmethod
+    def _make_guild_key(guild_id: int) -> str:
+        """Create a string key for guild configuration."""
+        return str(guild_id)
+
+    @staticmethod
+    def _make_dm_key(user_id: int) -> str:
+        """Create a string key for DM configuration, prefixed to avoid conflicts."""
+        return f"direct_messages.{user_id}"
 
     # ───────────── Voice ─────────────
 
-    def is_voice_enabled(self, guild_id: int) -> bool:
-        return self.voice_enabled.get(guild_id, False)
+    def is_voice_enabled(self, context_id: Union[int, str]) -> bool:
+        key = str(context_id)
+        return self.voice_enabled.get(key, False)
 
-    def set_voice_enabled(self, guild_id: int, enabled: bool) -> None:
-        self.voice_enabled[guild_id] = enabled
+    def set_voice_enabled(self, context_id: Union[int, str], enabled: bool) -> None:
+        key = str(context_id)
+        self.voice_enabled[key] = enabled
 
     # ───────────── Weights ─────────────
 
-    def get_weights(self, guild_id: int) -> Dict[str, int]:
-        weights = self.answer_weights.get(guild_id)
+    def get_weights(self, context_id: Union[int, str]) -> Dict[str, int]:
+        key = str(context_id)
+        weights = self.answer_weights.get(key)
         if weights is None:
             weights = DEFAULT_WEIGHTS.copy()
-            self.answer_weights[guild_id] = weights
+            self.answer_weights[key] = weights
 
         self._normalize_weights(weights)
         return weights
 
-    def set_weight(self, guild_id: int, answer_type: str, weight: int) -> None:
-        weights = self.get_weights(guild_id)
+    def set_weight(self, context_id: Union[int, str], answer_type: str, weight: int) -> None:
+        key = str(context_id)
+        weights = self.get_weights(key)
         weights[answer_type] = max(0, int(weight))
         self._normalize_weights(weights)
 
@@ -65,15 +81,15 @@ class ConfigOptions:
         if not isinstance(self.answer_weights, dict):
             raise ConfigValidationError("answer_weights must be a dict")
 
-        for guild_id, enabled in self.voice_enabled.items():
-            if not isinstance(guild_id, int):
-                raise ConfigValidationError("voice_enabled keys must be ints")
+        for context_key, enabled in self.voice_enabled.items():
+            if not isinstance(context_key, str):
+                raise ConfigValidationError("voice_enabled keys must be strings")
             if not isinstance(enabled, bool):
                 raise ConfigValidationError("voice_enabled values must be bools")
 
-        for guild_id, weights in self.answer_weights.items():
-            if not isinstance(guild_id, int):
-                raise ConfigValidationError("answer_weights keys must be ints")
+        for context_key, weights in self.answer_weights.items():
+            if not isinstance(context_key, str):
+                raise ConfigValidationError("answer_weights keys must be strings")
             if not isinstance(weights, dict):
                 raise ConfigValidationError("answer_weights values must be dicts")
 
@@ -100,8 +116,9 @@ def load_config() -> None:
 
         # ── voice_enabled ──
         if "voice_enabled" in data:
+            # Handle both old int keys and new string keys
             config.voice_enabled = {
-                int(k): bool(v)
+                str(k): bool(v)
                 for k, v in data["voice_enabled"].items()
             }
 
@@ -109,14 +126,16 @@ def load_config() -> None:
         if "answer_weights" in data:
             raw_weights = data["answer_weights"]
 
-            # OLD FORMAT: global weights
+            # OLD FORMAT: global weights (all int values)
             if all(isinstance(v, int) for v in raw_weights.values()):
-                for guild_id in config.voice_enabled.keys():
-                    config.answer_weights[guild_id] = raw_weights.copy()
+                # Migrate to per-context format for existing guilds
+                for context_key in config.voice_enabled.keys():
+                    config.answer_weights[context_key] = raw_weights.copy()
             else:
-                # NEW FORMAT: per-guild
-                for guild_id, weights in raw_weights.items():
-                    config.answer_weights[int(guild_id)] = {
+                # NEW FORMAT: per-context (guild or DM)
+                # Handle both old int keys and new string keys
+                for context_key, weights in raw_weights.items():
+                    config.answer_weights[str(context_key)] = {
                         k: int(v) for k, v in weights.items()
                     }
 

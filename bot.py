@@ -9,7 +9,7 @@ from audio import (
     play_mp3,
 )
 from config import config, load_config, save_config
-from helpers.config_helper import get_config
+from helpers.config_helper import get_config, get_context_id
 from voice_call.call import join_call, reconnect_call, leave_call
 
 TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -66,12 +66,15 @@ async def on_ready():
 async def ask(ctx: discord.ApplicationContext, question: str):
     await ctx.defer(ephemeral=True)
 
-    vc = ctx.guild.voice_client
+    # Get appropriate voice client (guild or DM)
+    vc = ctx.guild.voice_client if ctx.guild else ctx.voice_client
+
     if not vc or not vc.is_connected():
         await ctx.followup.send("Ben isn't in a voice channel. Use `/call` first.")
         return
 
-    answer = pick_weighted_ben_answer(ctx.guild_id)
+    context_id = get_context_id(ctx)
+    answer = pick_weighted_ben_answer(context_id)
     if not answer:
         await ctx.followup.send("No answer sounds found.")
         return
@@ -97,24 +100,27 @@ async def config_cmd(
 ):
     await ctx.defer(ephemeral=True)
 
+    context_id = get_context_id(ctx)
+
     if enable_voice is not None:
-        config.set_voice_enabled(ctx.guild_id, enable_voice)
+        config.set_voice_enabled(context_id, enable_voice)
 
     if yes_weight is not None:
-        config.set_weight(ctx.guild_id, "yes", yes_weight)
+        config.set_weight(context_id, "yes", yes_weight)
 
     if no_weight is not None:
-        config.set_weight(ctx.guild_id, "no", no_weight)
+        config.set_weight(context_id, "no", no_weight)
 
     if yapping_weight is not None:
-        config.set_weight(ctx.guild_id, "yapping", yapping_weight)
+        config.set_weight(context_id, "yapping", yapping_weight)
 
     save_config()
 
-    cfg = get_config(ctx.guild_id)
+    cfg = get_config(context_id)
 
+    context_type = "Server" if ctx.guild else "DM"
     response = (
-        f"**Talking Ben Configuration**\n\n"
+        f"**Talking Ben Configuration ({context_type})**\n\n"
         f"🎙 **voiceTalkToBen**: {cfg.voice_enabled}\n\n"
         f"**Answer Probabilities:**\n"
         f"🟢 Yes: {cfg.yes_pct:.1f}%\n"
@@ -131,10 +137,12 @@ async def config_cmd(
 # ─────────────────────────────────────────────
 @bot.slash_command(description="Show current Talking Ben settings.")
 async def ben_status(ctx: discord.ApplicationContext):
-    cfg = get_config(ctx.guild_id)
+    context_id = get_context_id(ctx)
+    cfg = get_config(context_id)
 
+    context_type = "Server" if ctx.guild else "DM"
     response = (
-        f"**Talking Ben Status**\n\n"
+        f"**Talking Ben Status ({context_type})**\n\n"
         f"🎙 **voiceTalkToBen**: {cfg.voice_enabled}\n\n"
         f"**Answer Probabilities:**\n"
         f"🟢 Yes: {cfg.yes_pct:.1f}%\n"
@@ -152,14 +160,24 @@ async def ben_status(ctx: discord.ApplicationContext):
 async def call(ctx: discord.ApplicationContext):
     await ctx.defer(ephemeral=True)
 
-    member = ctx.guild.get_member(ctx.author.id) or await ctx.guild.fetch_member(ctx.author.id)
+    # For guilds, check member voice state
+    if ctx.guild:
+        member = ctx.guild.get_member(ctx.author.id) or await ctx.guild.fetch_member(ctx.author.id)
 
-    if not member.voice or not member.voice.channel:
-        await ctx.followup.send("You need to be in a voice channel to use this command.")
+        if not member.voice or not member.voice.channel:
+            await ctx.followup.send("You need to be in a voice channel to use this command.")
+            return
+
+        channel = member.voice.channel
+        vc = ctx.guild.voice_client
+    else:
+        # For DMs, we can't directly access voice state
+        # The user needs to be in a guild voice channel to call Ben
+        await ctx.followup.send(
+            "Sorry, I can't join voice channels from DMs. "
+            "Please use the `/call` command from within a server where you're in a voice channel."
+        )
         return
-
-    channel = member.voice.channel
-    vc = ctx.guild.voice_client
 
     if vc and vc.is_connected() and getattr(vc, "recording", False):
         if vc.channel == channel:
@@ -170,7 +188,8 @@ async def call(ctx: discord.ApplicationContext):
         except Exception:
             pass
 
-    await join_call(channel, vc, ctx.guild_id, ctx)
+    context_id = get_context_id(ctx)
+    await join_call(channel, vc, context_id, ctx)
 
 
 # ─────────────────────────────────────────────
@@ -180,7 +199,9 @@ async def call(ctx: discord.ApplicationContext):
 async def hangup(ctx: discord.ApplicationContext):
     await ctx.defer(ephemeral=True)
 
-    vc = ctx.guild.voice_client
+    # Get appropriate voice client (guild or DM)
+    vc = ctx.guild.voice_client if ctx.guild else ctx.voice_client
+
     if not vc or not vc.is_connected():
         await ctx.followup.send("Ben isn't connected.")
         return

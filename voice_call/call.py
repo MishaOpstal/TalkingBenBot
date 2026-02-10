@@ -1,5 +1,6 @@
 import asyncio
 import os
+from typing import Union
 
 import discord
 
@@ -16,7 +17,7 @@ from voice_call.listener import start_listening
 async def join_call(
         channel: discord.VoiceChannel | discord.StageChannel,
         vc: discord.VoiceClient,
-        guild_id: int,
+        context_id: Union[int, str],
         ctx: discord.ApplicationContext = None
 ):
     # ── Heal ghost connections ──
@@ -39,6 +40,7 @@ async def join_call(
         # Give Discord a moment to process the connection
         await asyncio.sleep(0.5)
 
+        # Note: Stage channels only exist in guilds, not DMs
         success = await ensure_unsuppressed(ctx.guild)
         if not success:
             if ctx:
@@ -70,7 +72,7 @@ async def join_call(
             await ctx.followup.send("❌ Failed to connect to voice channel.")
         return
 
-    if not await start_listening(vc, guild_id, ctx):
+    if not await start_listening(vc, context_id, ctx):
         return
 
     if ctx:
@@ -97,7 +99,9 @@ async def reconnect_call(bot: discord.Bot):
         # Get or create voice client
         vc = guild.voice_client
 
-        await join_call(channel, vc, guild.id)
+        # Use guild ID as context_id for reconnections
+        context_id = str(guild.id)
+        await join_call(channel, vc, context_id)
 
 
 async def leave_call(vc: discord.VoiceClient):

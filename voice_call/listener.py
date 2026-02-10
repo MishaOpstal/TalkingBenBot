@@ -1,4 +1,5 @@
 import asyncio
+from typing import Union
 
 import discord
 
@@ -7,7 +8,7 @@ from voice_call.voice_watch import BenSink, monitor_silence
 
 async def start_listening(
         vc: discord.VoiceClient,
-        guild_id: int,
+        context_id: Union[int, str],
         ctx: discord.ApplicationContext = None
 ):
     async def finished_callback(sink, *args):
@@ -21,7 +22,7 @@ async def start_listening(
         except Exception:
             pass
 
-    sink = BenSink(guild_id)
+    sink = BenSink(context_id)
     try:
         vc.start_recording(sink, finished_callback)
     except Exception:
@@ -29,6 +30,6 @@ async def start_listening(
             await ctx.followup.send("❌ Could not start recording. Ben might be in a weird state, try `/hangup`.")
         return False
 
-    asyncio.create_task(monitor_silence(guild_id, vc, sink))
+    asyncio.create_task(monitor_silence(context_id, vc, sink))
 
     return True

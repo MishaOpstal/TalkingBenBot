@@ -1,4 +1,7 @@
 from dataclasses import dataclass
+from typing import Union
+
+import discord
 
 from audio import get_audio_files, YAPPING_PATH
 from config import config
@@ -16,8 +19,29 @@ class GuildConfigView:
     total_weight: int
 
 
-def get_config(guild_id: int) -> GuildConfigView:
-    weights = config.get_weights(guild_id)
+def get_context_id(ctx: discord.ApplicationContext) -> str:
+    """
+    Get a unique context ID for configuration.
+
+    For guilds: returns guild_id as string
+    For DMs: returns "direct_messages.{user_id}" to avoid conflicts
+    """
+    if ctx.guild:
+        # Guild context - use guild ID
+        return str(ctx.guild_id)
+    else:
+        # DM context - use prefixed user ID
+        return f"direct_messages.{ctx.author.id}"
+
+
+def get_config(context_id: Union[int, str]) -> GuildConfigView:
+    """
+    Get configuration for a given context (guild or DM).
+
+    Args:
+        context_id: Either a guild_id (int), or a DM context string "direct_messages.{user_id}"
+    """
+    weights = config.get_weights(context_id)
 
     yes = weights["yes"]
     no = weights["no"]
@@ -34,7 +58,7 @@ def get_config(guild_id: int) -> GuildConfigView:
         yapping_pct = ((yapping * yap_count) / total) * 100
 
     return GuildConfigView(
-        voice_enabled=config.is_voice_enabled(guild_id),
+        voice_enabled=config.is_voice_enabled(context_id),
         yes_weight=yes,
         no_weight=no,
         yapping_weight=yapping,

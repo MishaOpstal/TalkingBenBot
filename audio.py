@@ -1,6 +1,7 @@
 import asyncio
 import os
 import random
+from typing import Union
 
 import discord
 
@@ -16,9 +17,12 @@ def pick_random_from(path: str) -> str | None:
     return random.choice(files)
 
 
-def pick_weighted_ben_answer(guild_id: int) -> str | None:
+def pick_weighted_ben_answer(context_id: Union[int, str]) -> str | None:
     """
     Pick a Ben answer based on configurable weights.
+
+    Args:
+        context_id: Either a guild_id or a DM context string "direct_messages.{user_id}"
 
     Weights are configured in config.py:
     - "yes": weight for yes.mp3
@@ -35,7 +39,7 @@ def pick_weighted_ben_answer(guild_id: int) -> str | None:
 
     weighted_pool: list[str] = []
 
-    cfg = get_config(guild_id)
+    cfg = get_config(context_id)
 
     # Add yes with configured weight
     if os.path.isfile(yes):

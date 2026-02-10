@@ -6,6 +6,7 @@ import random
 import struct
 import time
 import os
+from typing import Union
 
 
 import discord
@@ -18,7 +19,7 @@ from helpers.config_helper import get_config
 # Tunables
 # ─────────────────────────────────────────────
 MIN_SPEECH_SECONDS = 0.6
-SILENCE_SECONDS = 0.35
+SILENCE_SECONDS = 1.0
 CHECK_INTERVAL = 0.03
 MAX_IDLE_AFTER_WAKE = 5.0
 
@@ -44,11 +45,11 @@ def pcm_rms(pcm: bytes) -> float:
 
 
 class BenSink(discord.sinks.Sink):
-    def __init__(self, guild_id: int):
+    def __init__(self, context_id: Union[int, str]):
         super().__init__(filters=None)
-        self.guild_id = guild_id
+        self.context_id = context_id
         self.reset_session(full=True)
-        self.config = get_config(guild_id)
+        self.config = get_config(context_id)
 
     # ───────── Helpers ─────────
     def _new_recognizer(self):
@@ -107,7 +108,7 @@ class BenSink(discord.sinks.Sink):
                 and not self.ben_activated
                 and any(w in text for w in WAKE_WORDS)
         ):
-            print(f"[WakeWord] Activated by user {user_id}")
+            print(f"[WakeWord] Activated by user {user_id} in context {self.context_id}")
             self.ben_activated = True
             self.active_user_id = user_id
             self.last_loud_time = now
@@ -150,21 +151,21 @@ class BenSink(discord.sinks.Sink):
 
 
 async def monitor_silence(
-        guild_id: int,
+        context_id: Union[int, str],
         vc: discord.VoiceClient,
         sink: BenSink
 ):
     # Import here to avoid circular import
     from voice_call.call import leave_call
 
-    cfg = get_config(guild_id)
+    cfg = get_config(context_id)
 
     while vc.is_connected():
         await asyncio.sleep(CHECK_INTERVAL)
 
         # If recording was stopped externally, terminate this monitor task
         if not getattr(vc, "recording", False):
-            print(f"[Monitor] Recording stopped for guild {guild_id}. Terminating monitor task.")
+            print(f"[Monitor] Recording stopped for context {context_id}. Terminating monitor task.")
             break
 
         if not cfg.voice_enabled:
@@ -207,7 +208,7 @@ async def monitor_silence(
         # ─────────────────────────
         # Ben answers (never interruptible)
         # ─────────────────────────
-        answer = pick_weighted_ben_answer(guild_id)
+        answer = pick_weighted_ben_answer(context_id)
         if answer:
             await play_mp3(vc, answer)
 
