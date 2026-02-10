@@ -32,48 +32,48 @@ async def join_call(
     else:
         await vc.move_to(channel)
 
-        # ── Handle Stage Channel Join ──
-        is_stage = isinstance(channel, discord.StageChannel)
-        if is_stage:
-            # Give Discord a moment to process the connection
-            await asyncio.sleep(0.5)
+    # ── Handle Stage Channel Join ──
+    is_stage = isinstance(channel, discord.StageChannel)
+    if is_stage:
+        # Give Discord a moment to process the connection
+        await asyncio.sleep(0.5)
 
-            success = await ensure_unsuppressed(ctx.guild)
-            if not success:
-                if ctx:
-                    await ctx.followup.send(
-                        "⚠️ Ben joined but may not be able to speak. Try manually promoting him to speaker.")
-
-            # Extra wait for Stage Channel to fully establish speaker state
-            # This is critical - stage channels need time to propagate permissions
-            await asyncio.sleep(1.5)
-
-        # ── Play call sequence (ORDERED, FULL PATHS) ──
-        call_sequence = sorted(
-            os.path.join(CALL_PATH, f)
-            for f in os.listdir(CALL_PATH)
-            if f.lower().endswith(".mp3")
-        )
-
-        if call_sequence:
-            await play_mp3_sequence(vc, call_sequence)
-
-            # CRITICAL: Wait for audio to finish before starting recording
-            # This prevents the recording from interfering with playback
-            if is_stage:
-                # Extra delay for Stage Channels to ensure audio completed
-                await asyncio.sleep(0.8)
-
-        if not vc.is_connected():
+        success = await ensure_unsuppressed(ctx.guild)
+        if not success:
             if ctx:
-                await ctx.followup.send("❌ Failed to connect to voice channel.")
-            return
+                await ctx.followup.send(
+                    "⚠️ Ben joined but may not be able to speak. Try manually promoting him to speaker.")
 
-        if not await start_listening(vc, ctx):
-            return
+        # Extra wait for Stage Channel to fully establish speaker state
+        # This is critical - stage channels need time to propagate permissions
+        await asyncio.sleep(1.5)
 
+    # ── Play call sequence (ORDERED, FULL PATHS) ──
+    call_sequence = sorted(
+        os.path.join(CALL_PATH, f)
+        for f in os.listdir(CALL_PATH)
+        if f.lower().endswith(".mp3")
+    )
+
+    if call_sequence:
+        await play_mp3_sequence(vc, call_sequence)
+
+        # CRITICAL: Wait for audio to finish before starting recording
+        # This prevents the recording from interfering with playback
+        if is_stage:
+            # Extra delay for Stage Channels to ensure audio completed
+            await asyncio.sleep(0.8)
+
+    if not vc.is_connected():
         if ctx:
-            await ctx.followup.send("📞 Ben joined the call.")
+            await ctx.followup.send("❌ Failed to connect to voice channel.")
+        return
+
+    if not await start_listening(vc, ctx):
+        return
+
+    if ctx:
+        await ctx.followup.send("📞 Ben joined the call.")
 
 
 async def reconnect_call(bot: discord.Bot):

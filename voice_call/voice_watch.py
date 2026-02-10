@@ -5,12 +5,13 @@ import math
 import random
 import struct
 import time
+import os
+
 
 import discord
 from vosk import Model, KaldiRecognizer
 
 from audio import pick_weighted_ben_answer, play_mp3
-from bot import leave_call
 from helpers.config_helper import get_config
 
 # ─────────────────────────────────────────────
@@ -22,7 +23,7 @@ CHECK_INTERVAL = 0.03
 MAX_IDLE_AFTER_WAKE = 5.0
 
 WAKE_WORDS = ("then", "ben", "hey ben", "hi ben", "hello ben", "hallo ben")
-VOSK_MODEL_PATH = "../models/vosk"
+VOSK_MODEL_PATH = "/app/models/vosk"
 
 # ─────────────────────────────────────────────
 # Load Vosk once
@@ -153,6 +154,9 @@ async def monitor_silence(
         vc: discord.VoiceClient,
         sink: BenSink
 ):
+    # Import here to avoid circular import
+    from voice_call.call import leave_call
+
     cfg = get_config(guild_id)
 
     while vc.is_connected():
