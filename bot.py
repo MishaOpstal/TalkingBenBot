@@ -435,7 +435,7 @@ async def ben_not_care(ctx: discord.ApplicationContext, message: str, color: dis
     )
     embed.set_author(name="Talking Ben", icon_url=bot.user.avatar.url if bot.user.avatar else None)
 
-    await ctx.respond(embed=embed, **send_params)
+    await ctx.respond(embed=embed)
 
 
 # ─────────────────────────────────────────────
