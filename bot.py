@@ -68,50 +68,73 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    # Only respond to DMs (not guild messages)
-    if message.guild is not None:
-        return
-
     # Ignore messages that start with / (commands)
     if message.content.startswith('/'):
         return
 
-    # Treat the message as a question to Ben
-    question = message.content.strip()
+    # Handle DMs
+    if message.guild is None:
+        # Treat the message as a question to Ben
+        question = message.content.strip()
 
-    if not question:
+        if not question:
+            return
+
+        # Get DM context ID
+        context_id = f"direct_messages.{message.author.id}"
+
+        # In DMs, we typically don't have voice clients since voice is guild-based
+        vc = None
+
+        # Pick an answer
+        answer = pick_weighted_ben_answer(context_id)
+
+        if not answer:
+            await message.reply("I don't have any answers available right now.")
+            return
+
+        # Extract message from filename
+        response_text = extract_message_from_filename(answer)
+
+        # Replace _ in response text with :
+        response_text = response_text.replace("_", ":")
+
+        # If in voice channel, play audio (unlikely in DMs, but check anyway)
+        if vc and vc.is_connected():
+            await play_mp3(vc, answer)
+
+        # Send the response as plain text
+        await message.reply("@silent " + response_text)
         return
 
-    # Get DM context ID
-    context_id = f"direct_messages.{message.author.id}"
+    # Handle server messages that mention "Ben" (capital B)
+    if "Ben" not in message.content:
+        return
 
-    # In DMs, we typically don't have voice clients since voice is guild-based
-    # But we'll check just in case the user is in a mutual guild with an active voice connection
-    vc = None
+    # Get the question (the full message)
+    question = message.content.strip()
+
+    # Get server context ID
+    context_id = str(message.guild.id)
+
+    # Get voice client if bot is in voice channel
+    vc = message.guild.voice_client
 
     # Pick an answer
     answer = pick_weighted_ben_answer(context_id)
 
     if not answer:
-        await message.reply("I don't have any answers available right now.")
-        return
+        return  # Silently ignore if no answers available in server
 
     # Extract message from filename
     response_text = extract_message_from_filename(answer)
 
-    # Create embed
-    embed = discord.Embed(
-        description=f"**{question}**\n\n{response_text}",
-        color=discord.Color.blue()
-    )
-    embed.set_author(name="Talking Ben", icon_url=bot.user.avatar.url if bot.user.avatar else None)
-
-    # If in voice channel, play audio (unlikely in DMs, but check anyway)
+    # If in voice channel, play audio first
     if vc and vc.is_connected():
         await play_mp3(vc, answer)
 
-    # Send the response
-    await message.reply(embed=embed)
+    # Send the response as plain text
+    await message.reply(response_text)
 
 
 # ─────────────────────────────────────────────
@@ -211,7 +234,7 @@ async def say(ctx: discord.ApplicationContext, response_type: str):
 @option("yapping_weight", int, min_value=0, max_value=100, required=False)
 @option("pickup_chance", int, min_value=0, max_value=99,
         description="Chance Ben doesn't pick up (0 = always picks up, 19 = 1 in 20)", required=False)
-async def config_cmd(
+async def config(
         ctx: discord.ApplicationContext,
         enable_voice: bool | None = None,
         yes_weight: int | None = None,

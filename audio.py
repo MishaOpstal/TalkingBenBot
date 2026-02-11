@@ -34,8 +34,12 @@ def pick_weighted_ben_answer(context_id: Union[int, str]) -> str | None:
     → Pool has 10 yes + 10 no + 10 yapping (2*5) = 30 total
     → Yes: 33%, No: 33%, Yapping: 33% (distributed among 5 files)
     """
-    yes = os.path.join(ANSWER_PATH, "yes.mp3")
-    no = os.path.join(ANSWER_PATH, "no.mp3")
+    answer_file_list = os.listdir(ANSWER_PATH)
+
+    # Let's look for a file starting with yes
+    yes = os.path.join(ANSWER_PATH, [f for f in answer_file_list if f.lower().startswith("yes")][0])
+    no = os.path.join(ANSWER_PATH, [f for f in answer_file_list if f.lower().startswith("no")][0])
+
     yaps = get_audio_files(YAPPING_PATH)
 
     weighted_pool: list[str] = []
