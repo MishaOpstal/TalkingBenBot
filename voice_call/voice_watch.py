@@ -6,7 +6,8 @@ import random
 import struct
 import time
 import os
-from typing import Union
+import threading
+from typing import Union, Optional
 
 import discord
 from vosk import Model, KaldiRecognizer
@@ -48,6 +49,7 @@ class BenSink(discord.sinks.Sink):
         super().__init__(filters=None)
         self.context_id = context_id
         self.monitor_task = None  # Track the monitor task
+        self._recognizer_lock = threading.Lock()  # Thread safety for recognizer access
         self.recognizer = self._new_recognizer()  # Initialize recognizer immediately
         self.reset_session(full=False)  # Don't recreate recognizer in reset
         self.config = get_config(context_id)
@@ -57,6 +59,24 @@ class BenSink(discord.sinks.Sink):
         recognizer = KaldiRecognizer(vosk_model, 16000)
         recognizer.SetWords(False)
         return recognizer
+
+    def _safe_replace_recognizer(self) -> None:
+        """Thread-safe recognizer replacement that cleans up old one"""
+        with self._recognizer_lock:
+            try:
+                if self.recognizer is not None:
+                    old_recognizer = self.recognizer
+                    self.recognizer = self._new_recognizer()  # Create new one first
+                    # Small delay to ensure any in-flight audio packets complete
+                    time.sleep(0.01)
+                    del old_recognizer  # Then delete old one
+                else:
+                    self.recognizer = self._new_recognizer()
+            except Exception as e:
+                print(f"[BenSink] Error replacing recognizer: {e}")
+                # Make sure we always have a recognizer
+                if self.recognizer is None:
+                    self.recognizer = self._new_recognizer()
 
     def reset_session(self, full: bool = False):
         self.ben_activated = False
@@ -72,65 +92,64 @@ class BenSink(discord.sinks.Sink):
         self.ack_played = False
         self.too_short_played = False
 
-        if full and hasattr(self, 'recognizer'):
-            # CRITICAL FIX: Clean up old recognizer before creating new one
-            # This prevents decoder process leaks
-            try:
-                old_recognizer = self.recognizer
-                self.recognizer = None  # Clear reference first
-                del old_recognizer  # Delete old recognizer
-            except Exception as e:
-                print(f"[BenSink] Error cleaning up old recognizer: {e}")
-
-            # Now create new recognizer
-            self.recognizer = self._new_recognizer()
+        if full:
+            # Thread-safe recognizer replacement
+            self._safe_replace_recognizer()
 
     def cleanup(self):
         """Clean up resources when sink is no longer needed"""
         if self.monitor_task:
             self.monitor_task.cancel()
 
-        # CRITICAL: Properly clean up the recognizer to kill decoder process
-        if hasattr(self, 'recognizer') and self.recognizer is not None:
-            try:
-                old_recognizer = self.recognizer
-                self.recognizer = None
-                del old_recognizer
-            except Exception as e:
-                print(f"[BenSink] Error during recognizer cleanup: {e}")
+        # CRITICAL: Thread-safe cleanup of the recognizer
+        with self._recognizer_lock:
+            if hasattr(self, 'recognizer') and self.recognizer is not None:
+                try:
+                    old_recognizer = self.recognizer
+                    self.recognizer = None
+                    # Small delay to ensure write() isn't using it
+                    time.sleep(0.02)
+                    del old_recognizer
+                except Exception as e:
+                    print(f"[BenSink] Error during recognizer cleanup: {e}")
 
     # ───────── Audio Input ─────────
     def write(self, pcm: bytes, user_id: int) -> None:
-        # Safety check: make sure recognizer exists
-        if not hasattr(self, 'recognizer') or self.recognizer is None:
-            return
+        # Thread-safe recognizer access
+        with self._recognizer_lock:
+            # Safety check: make sure recognizer exists
+            if not hasattr(self, 'recognizer') or self.recognizer is None:
+                return
 
-        now = time.monotonic()
+            now = time.monotonic()
+
+            # ─────────────────────────
+            # Mono + resample for recognizer
+            # ─────────────────────────
+            try:
+                mono = audioop.tomono(pcm, 2, 1, 1)
+                mono_16k, _ = audioop.ratecv(
+                    mono, 2, 1, 48000, 16000, None
+                )
+            except Exception:
+                return
+
+            # ─────────────────────────
+            # Recognition (always running)
+            # ─────────────────────────
+            try:
+                if self.recognizer.AcceptWaveform(mono_16k):
+                    result = json.loads(self.recognizer.Result())
+                    text = result.get("text", "").lower()
+                else:
+                    result = json.loads(self.recognizer.PartialResult())
+                    text = result.get("partial", "").lower()
+            except Exception as e:
+                # Handle any recognition errors gracefully
+                return
 
         # ─────────────────────────
-        # Mono + resample for recognizer
-        # ─────────────────────────
-        try:
-            mono = audioop.tomono(pcm, 2, 1, 1)
-            mono_16k, _ = audioop.ratecv(
-                mono, 2, 1, 48000, 16000, None
-            )
-        except Exception:
-            return
-
-        # ─────────────────────────
-        # Recognition (always running)
-        # ─────────────────────────
-
-        if self.recognizer.AcceptWaveform(mono_16k):
-            result = json.loads(self.recognizer.Result())
-            text = result.get("text", "").lower()
-        else:
-            result = json.loads(self.recognizer.PartialResult())
-            text = result.get("partial", "").lower()
-
-        # ─────────────────────────
-        # Wake word detection
+        # Wake word detection (outside lock - we'll use safe replacement)
         # ─────────────────────────
         if (
                 self.config.voice_enabled
@@ -142,15 +161,8 @@ class BenSink(discord.sinks.Sink):
             self.active_user_id = user_id
             self.last_loud_time = now
 
-            # CRITICAL FIX: Clean up old recognizer before creating new one
-            try:
-                old_recognizer = self.recognizer
-                self.recognizer = None
-                del old_recognizer
-            except Exception as e:
-                print(f"[WakeWord] Error cleaning up old recognizer: {e}")
-
-            self.recognizer = self._new_recognizer()
+            # Thread-safe recognizer replacement
+            self._safe_replace_recognizer()
             return
 
         # ─────────────────────────
