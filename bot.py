@@ -20,6 +20,9 @@ TOKEN = os.environ.get("DISCORD_TOKEN")
 if not TOKEN:
     raise RuntimeError("DISCORD_TOKEN env var is required.")
 
+# Debug voice recognition flag
+DEBUG_VOICE = os.environ.get("DEBUG_VOICE", "false").lower() in ("true", "1", "yes")
+
 intents = discord.Intents.default()
 intents.voice_states = True
 intents.members = True
@@ -70,6 +73,8 @@ async def on_ready():
     await reconnect_call(bot)
 
     print(f"Logged in as {bot.user}")
+    if DEBUG_VOICE:
+        print("[DEBUG] Voice recognition debugging is ENABLED")
 
 
 @bot.event

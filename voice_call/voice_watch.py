@@ -15,6 +15,9 @@ from vosk import Model, KaldiRecognizer
 from audio import pick_weighted_ben_answer, play_mp3
 from helpers.config_helper import get_config
 
+# Debug voice recognition flag
+DEBUG_VOICE = os.environ.get("DEBUG_VOICE", "false").lower() in ("true", "1", "yes")
+
 # ─────────────────────────────────────────────
 # Tunables
 # ─────────────────────────────────────────────
@@ -141,9 +144,13 @@ class BenSink(discord.sinks.Sink):
                 if self.recognizer.AcceptWaveform(mono_16k):
                     result = json.loads(self.recognizer.Result())
                     text = result.get("text", "").lower()
+                    if DEBUG_VOICE and text.strip():
+                        print(f"[VoiceDebug] Final from user {user_id}: '{text}'")
                 else:
                     result = json.loads(self.recognizer.PartialResult())
                     text = result.get("partial", "").lower()
+                    if DEBUG_VOICE and text.strip():
+                        print(f"[VoiceDebug] Partial from user {user_id}: '{text}'")
             except Exception as e:
                 # Handle any recognition errors gracefully
                 return
@@ -156,7 +163,10 @@ class BenSink(discord.sinks.Sink):
                 and not self.ben_activated
                 and any(w in text for w in WAKE_WORDS)
         ):
-            print(f"[WakeWord] Activated by user {user_id} in context {self.context_id}")
+            matched_word = next((w for w in WAKE_WORDS if w in text), "unknown")
+            print(f"[WakeWord] Activated by user {user_id} in context {self.context_id} (detected: '{matched_word}')")
+            if DEBUG_VOICE:
+                print(f"[VoiceDebug] Wake word detected in text: '{text}'")
             self.ben_activated = True
             self.active_user_id = user_id
             self.last_loud_time = now
