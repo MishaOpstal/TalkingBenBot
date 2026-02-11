@@ -23,10 +23,17 @@ DEBUG_VOICE = os.environ.get("DEBUG_VOICE", "false").lower() in ("true", "1", "y
 # ─────────────────────────────────────────────
 MIN_SPEECH_SECONDS = 0.6
 SILENCE_SECONDS = 0.35
-CHECK_INTERVAL = 0.03
+CHECK_INTERVAL = 1.0
 MAX_IDLE_AFTER_WAKE = 5.0
 
-WAKE_WORDS = ("then", "ben", "hey ben", "hi ben", "hello ben", "hallo ben")
+WAKE_WORDS = (
+    "ben",
+    "pen",
+    "men",
+    "bin",
+    "den"
+)
+
 VOSK_MODEL_PATH = "/app/models/vosk"
 
 # ─────────────────────────────────────────────
