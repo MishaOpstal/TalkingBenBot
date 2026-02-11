@@ -73,16 +73,31 @@ class BenSink(discord.sinks.Sink):
         self.too_short_played = False
 
         if full and hasattr(self, 'recognizer'):
+            # CRITICAL FIX: Clean up old recognizer before creating new one
+            # This prevents decoder process leaks
+            try:
+                old_recognizer = self.recognizer
+                self.recognizer = None  # Clear reference first
+                del old_recognizer  # Delete old recognizer
+            except Exception as e:
+                print(f"[BenSink] Error cleaning up old recognizer: {e}")
+
+            # Now create new recognizer
             self.recognizer = self._new_recognizer()
 
     def cleanup(self):
         """Clean up resources when sink is no longer needed"""
         if self.monitor_task:
             self.monitor_task.cancel()
-        # The recognizer should be garbage collected automatically
-        # but we can explicitly delete it to be safe
-        if hasattr(self, 'recognizer'):
-            del self.recognizer
+
+        # CRITICAL: Properly clean up the recognizer to kill decoder process
+        if hasattr(self, 'recognizer') and self.recognizer is not None:
+            try:
+                old_recognizer = self.recognizer
+                self.recognizer = None
+                del old_recognizer
+            except Exception as e:
+                print(f"[BenSink] Error during recognizer cleanup: {e}")
 
     # ───────── Audio Input ─────────
     def write(self, pcm: bytes, user_id: int) -> None:
@@ -126,6 +141,15 @@ class BenSink(discord.sinks.Sink):
             self.ben_activated = True
             self.active_user_id = user_id
             self.last_loud_time = now
+
+            # CRITICAL FIX: Clean up old recognizer before creating new one
+            try:
+                old_recognizer = self.recognizer
+                self.recognizer = None
+                del old_recognizer
+            except Exception as e:
+                print(f"[WakeWord] Error cleaning up old recognizer: {e}")
+
             self.recognizer = self._new_recognizer()
             return
 
