@@ -229,9 +229,9 @@ async def say(ctx: discord.ApplicationContext, response_type: str):
 
 
 # ─────────────────────────────────────────────
-# Config
+# Config - RENAMED to avoid shadowing the config module
 # ─────────────────────────────────────────────
-@bot.slash_command(description="Configure Talking Ben settings.")
+@bot.slash_command(name="config", description="Configure Talking Ben settings.")
 @option("enable_voice", bool, description="Enable/disable voice-triggered answers", required=False)
 @option("yes_weight", int, min_value=0, max_value=100, required=False)
 @option("no_weight", int, min_value=0, max_value=100, required=False)
@@ -240,7 +240,7 @@ async def say(ctx: discord.ApplicationContext, response_type: str):
         description="Chance Ben doesn't pick up (0 = always picks up, 19 = 1 in 20)", required=False)
 @option("hangup_chance", int, min_value=0, max_value=99,
         description="Chance Ben doesn't hang up (0 = always hangs up, 19 = 1 in 20)", required=False)
-async def config(
+async def ben_config(
         ctx: discord.ApplicationContext,
         enable_voice: bool | None = None,
         yes_weight: int | None = None,
@@ -378,8 +378,8 @@ async def call(ctx: discord.ApplicationContext):
     # Join the call
     await join_call(channel, vc, context_id, ctx)
 
-    # Send the announcement
-    await ctx.respond(embed=embed, **send_params)
+    # Send the announcement (no send_params because we used defer - it goes through webhook)
+    await ctx.respond(embed=embed)
 
 
 # ─────────────────────────────────────────────
@@ -420,7 +420,8 @@ async def hangup(ctx: discord.ApplicationContext):
     )
     embed.set_author(name="Talking Ben", icon_url=bot.user.avatar.url if bot.user.avatar else None)
 
-    await ctx.respond(embed=embed, **send_params)
+    # No send_params because we used defer - it goes through webhook
+    await ctx.respond(embed=embed)
 
 
 # ─────────────────────────────────────────────
