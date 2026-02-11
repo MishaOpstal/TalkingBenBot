@@ -1,6 +1,7 @@
 import asyncio
 import os
 import random
+import re
 from typing import Union
 
 import discord
@@ -59,6 +60,57 @@ def pick_weighted_ben_answer(context_id: Union[int, str]) -> str | None:
         return None
 
     return random.choice(weighted_pool)
+
+
+def get_specific_answer(answer_type: str) -> str | None:
+    """
+    Get a specific answer file based on type.
+
+    Args:
+        answer_type: "yes", "no", or "yap"
+
+    Returns:
+        Path to the audio file, or None if not found
+    """
+    if answer_type == "yes":
+        yes = os.path.join(ANSWER_PATH, "yes.mp3")
+        return yes if os.path.isfile(yes) else None
+    elif answer_type == "no":
+        no = os.path.join(ANSWER_PATH, "no.mp3")
+        return no if os.path.isfile(no) else None
+    elif answer_type == "yap":
+        return pick_random_from(YAPPING_PATH)
+
+    return None
+
+
+def extract_message_from_filename(filepath: str) -> str:
+    """
+    Extract a chat message from an audio filename.
+
+    Format: "filename [Message here.].mp3" -> "Message here."
+    If no brackets, uses the filename without extension.
+
+    Args:
+        filepath: Full path to the audio file
+
+    Returns:
+        The extracted message string
+    """
+    if not filepath:
+        return "..."
+
+    # Get the filename without path
+    filename = os.path.basename(filepath)
+
+    # Look for text in brackets
+    match = re.search(r'\[(.*?)\]', filename)
+    if match:
+        return match.group(1)
+
+    # Otherwise, return filename without extension
+    name_without_ext = os.path.splitext(filename)[0]
+    return name_without_ext.capitalize()
 
 
 async def play_mp3(vc: discord.VoiceClient, file_path: str, delay: float = 0.025) -> None:

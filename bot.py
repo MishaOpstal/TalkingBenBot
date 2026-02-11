@@ -1,11 +1,14 @@
 import asyncio
 import os
+import random
 
 import discord
 from discord import option
 
 from audio import (
     pick_weighted_ben_answer,
+    get_specific_answer,
+    extract_message_from_filename,
     play_mp3,
 )
 from config import config, load_config, save_config
@@ -19,6 +22,7 @@ if not TOKEN:
 intents = discord.Intents.default()
 intents.voice_states = True
 intents.members = True
+intents.message_content = True  # Required to read DM content
 
 
 def ensure_opus_loaded() -> None:
@@ -58,29 +62,143 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
 
 
+@bot.event
+async def on_message(message):
+    # Ignore bot's own messages
+    if message.author == bot.user:
+        return
+
+    # Only respond to DMs (not guild messages)
+    if message.guild is not None:
+        return
+
+    # Ignore messages that start with / (commands)
+    if message.content.startswith('/'):
+        return
+
+    # Treat the message as a question to Ben
+    question = message.content.strip()
+
+    if not question:
+        return
+
+    # Get DM context ID
+    context_id = f"direct_messages.{message.author.id}"
+
+    # In DMs, we typically don't have voice clients since voice is guild-based
+    # But we'll check just in case the user is in a mutual guild with an active voice connection
+    vc = None
+
+    # Pick an answer
+    answer = pick_weighted_ben_answer(context_id)
+
+    if not answer:
+        await message.reply("I don't have any answers available right now.")
+        return
+
+    # Extract message from filename
+    response_text = extract_message_from_filename(answer)
+
+    # Create embed
+    embed = discord.Embed(
+        description=f"**{question}**\n\n{response_text}",
+        color=discord.Color.blue()
+    )
+    embed.set_author(name="Talking Ben", icon_url=bot.user.avatar.url if bot.user.avatar else None)
+
+    # If in voice channel, play audio (unlikely in DMs, but check anyway)
+    if vc and vc.is_connected():
+        await play_mp3(vc, answer)
+
+    # Send the response
+    await message.reply(embed=embed)
+
+
 # ─────────────────────────────────────────────
 # Ask Ben
 # ─────────────────────────────────────────────
 @bot.slash_command(description="Ask Talking Ben a question (random answer).")
 @option("question", str, description="Your question")
 async def ask(ctx: discord.ApplicationContext, question: str):
-    await ctx.defer(ephemeral=True)
-
     # Get appropriate voice client (guild or DM)
     vc = ctx.guild.voice_client if ctx.guild else ctx.voice_client
 
-    if not vc or not vc.is_connected():
-        await ctx.followup.send("Ben isn't in a voice channel. Use `/call` first.")
-        return
-
     context_id = get_context_id(ctx)
     answer = pick_weighted_ben_answer(context_id)
+
     if not answer:
-        await ctx.followup.send("No answer sounds found.")
+        await ctx.respond("No answer sounds found.", ephemeral=True)
         return
 
+    # Extract message from filename
+    message = extract_message_from_filename(answer)
+
+    # Create embed
+    if ctx.guild:
+        # In guilds, show who asked
+        embed = discord.Embed(
+            description=f"{ctx.author.mention}: **{question}**\n\n{message}",
+            color=discord.Color.blue()
+        )
+    else:
+        # In DMs, no need to show who asked
+        embed = discord.Embed(
+            description=f"**{question}**\n\n{message}",
+            color=discord.Color.blue()
+        )
+
+    embed.set_author(name="Talking Ben", icon_url=bot.user.avatar.url if bot.user.avatar else None)
+
+    # If not in voice channel, just send the text response
+    if not vc or not vc.is_connected():
+        await ctx.respond(embed=embed)
+        return
+
+    # In voice channel - play audio then respond
+    await ctx.defer()
     await play_mp3(vc, answer)
-    await ctx.followup.send("📞 Ben answered.")
+    await ctx.respond(embed=embed)
+
+
+# ─────────────────────────────────────────────
+# Say (specific answer)
+# ─────────────────────────────────────────────
+@bot.slash_command(description="Make Ben say a specific response.")
+@option(
+    "response_type",
+    str,
+    description="Type of response",
+    choices=["yes", "no", "yap"]
+)
+async def say(ctx: discord.ApplicationContext, response_type: str):
+    # Get appropriate voice client (guild or DM)
+    vc = ctx.guild.voice_client if ctx.guild else ctx.voice_client
+
+    answer = get_specific_answer(response_type)
+
+    if not answer:
+        await ctx.respond(f"No {response_type} sound found.", ephemeral=True)
+        return
+
+    # Extract message from filename
+    message = extract_message_from_filename(answer)
+
+    # Create embed
+    embed = discord.Embed(
+        description=message,
+        color=discord.Color.blue()
+    )
+    embed.set_author(name="Talking Ben", icon_url=bot.user.avatar.url if bot.user.avatar else None)
+
+    # If not in voice channel, just send the text response
+    if not vc or not vc.is_connected():
+        await ctx.respond(embed=embed)
+        return
+
+    # In voice channel - play audio then respond
+    await ctx.defer()
+    await play_mp3(vc, answer)
+    await ctx.respond(embed=embed)
 
 
 # ─────────────────────────────────────────────
@@ -91,12 +209,15 @@ async def ask(ctx: discord.ApplicationContext, question: str):
 @option("yes_weight", int, min_value=0, max_value=100, required=False)
 @option("no_weight", int, min_value=0, max_value=100, required=False)
 @option("yapping_weight", int, min_value=0, max_value=100, required=False)
+@option("pickup_chance", int, min_value=0, max_value=99,
+        description="Chance Ben doesn't pick up (0 = always picks up, 19 = 1 in 20)", required=False)
 async def config_cmd(
         ctx: discord.ApplicationContext,
         enable_voice: bool | None = None,
         yes_weight: int | None = None,
         no_weight: int | None = None,
         yapping_weight: int | None = None,
+        pickup_chance: int | None = None,
 ):
     await ctx.defer(ephemeral=True)
 
@@ -114,14 +235,19 @@ async def config_cmd(
     if yapping_weight is not None:
         config.set_weight(context_id, "yapping", yapping_weight)
 
+    if pickup_chance is not None:
+        config.set_pickup_chance(context_id, pickup_chance)
+
     save_config()
 
     cfg = get_config(context_id)
+    pickup = config.get_pickup_chance(context_id)
 
     context_type = "Server" if ctx.guild else "DM"
     response = (
         f"**Talking Ben Configuration ({context_type})**\n\n"
-        f"🎙 **voiceTalkToBen**: {cfg.voice_enabled}\n\n"
+        f"🎙 **voiceTalkToBen**: {cfg.voice_enabled}\n"
+        f"📞 **Pickup Chance**: {pickup} (1 in {pickup + 1} chance he doesn't pick up)\n\n"
         f"**Answer Probabilities:**\n"
         f"🟢 Yes: {cfg.yes_pct:.1f}%\n"
         f"🔴 No: {cfg.no_pct:.1f}%\n"
@@ -139,11 +265,13 @@ async def config_cmd(
 async def ben_status(ctx: discord.ApplicationContext):
     context_id = get_context_id(ctx)
     cfg = get_config(context_id)
+    pickup = config.get_pickup_chance(context_id)
 
     context_type = "Server" if ctx.guild else "DM"
     response = (
         f"**Talking Ben Status ({context_type})**\n\n"
-        f"🎙 **voiceTalkToBen**: {cfg.voice_enabled}\n\n"
+        f"🎙 **voiceTalkToBen**: {cfg.voice_enabled}\n"
+        f"📞 **Pickup Chance**: {pickup} (1 in {pickup + 1} chance he doesn't pick up)\n\n"
         f"**Answer Probabilities:**\n"
         f"🟢 Yes: {cfg.yes_pct:.1f}%\n"
         f"🔴 No: {cfg.no_pct:.1f}%\n"
@@ -158,14 +286,12 @@ async def ben_status(ctx: discord.ApplicationContext):
 # ─────────────────────────────────────────────
 @bot.slash_command(description="Call Talking Ben into your current voice channel.")
 async def call(ctx: discord.ApplicationContext):
-    await ctx.defer(ephemeral=True)
-
     # For guilds, check member voice state
     if ctx.guild:
         member = ctx.guild.get_member(ctx.author.id) or await ctx.guild.fetch_member(ctx.author.id)
 
         if not member.voice or not member.voice.channel:
-            await ctx.followup.send("You need to be in a voice channel to use this command.")
+            await ctx.respond("You need to be in a voice channel to use this command.", ephemeral=True)
             return
 
         channel = member.voice.channel
@@ -173,15 +299,16 @@ async def call(ctx: discord.ApplicationContext):
     else:
         # For DMs, we can't directly access voice state
         # The user needs to be in a guild voice channel to call Ben
-        await ctx.followup.send(
+        await ctx.respond(
             "Sorry, I can't join voice channels from DMs. "
-            "Please use the `/call` command from within a server where you're in a voice channel."
+            "Please use the `/call` command from within a server where you're in a voice channel.",
+            ephemeral=True
         )
         return
 
     if vc and vc.is_connected() and getattr(vc, "recording", False):
         if vc.channel == channel:
-            await ctx.followup.send("Ben is already in a call with you!")
+            await ctx.respond("Ben is already in a call with you!", ephemeral=True)
             return
         try:
             vc.stop_recording()
@@ -189,7 +316,36 @@ async def call(ctx: discord.ApplicationContext):
             pass
 
     context_id = get_context_id(ctx)
+
+    # Check if Ben picks up the phone
+    pickup_chance = config.get_pickup_chance(context_id)
+
+    if pickup_chance > 0 and random.randint(0, pickup_chance) == 0:
+        # Ben doesn't pick up
+        embed = discord.Embed(
+            description=f"📞 {ctx.author.mention} tried to call Ben, but he didn't pick up the phone...",
+            color=discord.Color.red()
+        )
+        embed.set_author(name="Talking Ben", icon_url=bot.user.avatar.url if bot.user.avatar else None)
+
+        await ctx.respond(embed=embed)
+        return
+
+    # Ben picks up - announce in chat
+    embed = discord.Embed(
+        description=f"📞 {ctx.author.mention} called Ben!",
+        color=discord.Color.green()
+    )
+    embed.set_author(name="Talking Ben", icon_url=bot.user.avatar.url if bot.user.avatar else None)
+
+    # Defer to give us time to connect
+    await ctx.defer()
+
+    # Join the call
     await join_call(channel, vc, context_id, ctx)
+
+    # Send the announcement
+    await ctx.respond(embed=embed)
 
 
 # ─────────────────────────────────────────────
@@ -197,17 +353,23 @@ async def call(ctx: discord.ApplicationContext):
 # ─────────────────────────────────────────────
 @bot.slash_command(description="Hang up Talking Ben.")
 async def hangup(ctx: discord.ApplicationContext):
-    await ctx.defer(ephemeral=True)
-
     # Get appropriate voice client (guild or DM)
     vc = ctx.guild.voice_client if ctx.guild else ctx.voice_client
 
     if not vc or not vc.is_connected():
-        await ctx.followup.send("Ben isn't connected.")
+        await ctx.respond("Ben isn't connected.", ephemeral=True)
         return
 
+    await ctx.defer()
     await leave_call(vc)
-    await ctx.followup.send("☎️ Ben hung up.")
+
+    embed = discord.Embed(
+        description=f"☎️ {ctx.author.mention} hung up on Ben.",
+        color=discord.Color.orange()
+    )
+    embed.set_author(name="Talking Ben", icon_url=bot.user.avatar.url if bot.user.avatar else None)
+
+    await ctx.respond(embed=embed)
 
 
 # ─────────────────────────────────────────────

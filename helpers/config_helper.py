@@ -17,6 +17,7 @@ class GuildConfigView:
     no_pct: float
     yapping_pct: float
     total_weight: int
+    pickup_chance: int
 
 
 def get_context_id(ctx: discord.ApplicationContext) -> str:
@@ -66,4 +67,5 @@ def get_config(context_id: Union[int, str]) -> GuildConfigView:
         no_pct=no_pct,
         yapping_pct=yapping_pct,
         total_weight=total,
+        pickup_chance=config.get_pickup_chance(context_id),
     )

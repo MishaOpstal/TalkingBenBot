@@ -108,6 +108,7 @@ async def leave_call(vc: discord.VoiceClient):
     hang = pick_random_from(HANG_UP_PATH)
     if hang:
         await play_mp3(vc, hang)
+        await asyncio.sleep(0.5)
 
     try:
         # Clean up the sink before stopping recording
