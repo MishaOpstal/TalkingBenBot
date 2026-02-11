@@ -6,7 +6,7 @@ from typing import Union
 
 import discord
 
-from helpers.audio_helper import get_audio_files, ANSWER_PATH, YAPPING_PATH
+from helpers.audio_helper import get_audio_files, ANSWER_PATH, YAPPING_PATH, YES_PATH, NO_PATH
 from helpers.config_helper import get_config
 
 
@@ -34,12 +34,6 @@ def pick_weighted_ben_answer(context_id: Union[int, str]) -> str | None:
     → Pool has 10 yes + 10 no + 10 yapping (2*5) = 30 total
     → Yes: 33%, No: 33%, Yapping: 33% (distributed among 5 files)
     """
-    answer_file_list = os.listdir(ANSWER_PATH)
-
-    # Let's look for a file starting with yes
-    yes = os.path.join(ANSWER_PATH, [f for f in answer_file_list if f.lower().startswith("yes")][0])
-    no = os.path.join(ANSWER_PATH, [f for f in answer_file_list if f.lower().startswith("no")][0])
-
     yaps = get_audio_files(YAPPING_PATH)
 
     weighted_pool: list[str] = []
@@ -47,14 +41,14 @@ def pick_weighted_ben_answer(context_id: Union[int, str]) -> str | None:
     cfg = get_config(context_id)
 
     # Add yes with configured weight
-    if os.path.isfile(yes):
+    if os.path.isfile(YES_PATH):
         yes_weight = cfg.yes_weight
-        weighted_pool.extend([yes] * yes_weight)
+        weighted_pool.extend([YES_PATH] * yes_weight)
 
     # Add no with configured weight
-    if os.path.isfile(no):
+    if os.path.isfile(NO_PATH):
         no_weight = cfg.no_weight
-        weighted_pool.extend([no] * no_weight)
+        weighted_pool.extend([NO_PATH] * no_weight)
 
     # Add each yapping file with configured weight
     yapping_weight = cfg.yapping_weight
@@ -77,11 +71,9 @@ def get_specific_answer(answer_type: str) -> str | None:
         Path to the audio file, or None if not found
     """
     if answer_type == "yes":
-        yes = os.path.join(ANSWER_PATH, "yes.mp3")
-        return yes if os.path.isfile(yes) else None
+        return YES_PATH if os.path.isfile(YES_PATH) else None
     elif answer_type == "no":
-        no = os.path.join(ANSWER_PATH, "no.mp3")
-        return no if os.path.isfile(no) else None
+        return NO_PATH if os.path.isfile(NO_PATH) else None
     elif answer_type == "yap":
         return pick_random_from(YAPPING_PATH)
 
@@ -108,7 +100,7 @@ def extract_message_from_filename(filepath: str) -> str:
     filename = os.path.basename(filepath)
 
     # Look for text in brackets
-    match = re.search(r'\[(.*?)\]', filename)
+    match = re.search(r'\[(.*?)]', filename)
     if match:
         return match.group(1)
 

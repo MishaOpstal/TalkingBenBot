@@ -9,6 +9,9 @@ HANG_UP_PATH = os.path.join(AUDIO_PATH, "telephone", "hang_up")
 ANSWER_PATH = os.path.join(AUDIO_PATH, "answers")
 YAPPING_PATH = os.path.join(AUDIO_PATH, "yapping")
 
+YES_PATH = os.path.join(ANSWER_PATH, [f for f in os.listdir(ANSWER_PATH) if f.lower().startswith("yes")][0])
+NO_PATH = os.path.join(ANSWER_PATH, [f for f in os.listdir(ANSWER_PATH) if f.lower().startswith("no")][0])
+
 def get_audio_files(path: str) -> list[str]:
     if not os.path.isdir(path):
         return []

@@ -11,6 +11,7 @@ DEFAULT_WEIGHTS: Dict[str, int] = {
 }
 
 DEFAULT_PICKUP_CHANCE = 19  # 1 in 20 chance Ben doesn't pick up (0 = always picks up, 19 = 1 in 20)
+DEFAULT_HANGUP_CHANCE = 5  # 1 in 20
 
 
 class ConfigValidationError(Exception):
@@ -22,6 +23,7 @@ class ConfigOptions:
         self.voice_enabled: Dict[str, bool] = {}
         self.answer_weights: Dict[str, Dict[str, int]] = {}
         self.pickup_chance: Dict[str, int] = {}  # New: per-context pickup chance
+        self.hangup_chance: Dict[str, int] = {}  # New: per-context hangup chance
 
     # ───────────── ID Helpers ─────────────
 
@@ -56,6 +58,18 @@ class ConfigOptions:
         """Set the pickup chance (0-99, where 0 = always picks up)"""
         key = str(context_id)
         self.pickup_chance[key] = max(0, min(99, int(chance)))
+
+    # ───────────── Hangup Chance ─────────────
+
+    def get_hangup_chance(self, context_id: Union[int, str]) -> int:
+        """Get the hangup chance (0 = always hangs up, 19 = 1 in 20 doesn't hang up)"""
+        key = str(context_id)
+        return self.hangup_chance.get(key, DEFAULT_HANGUP_CHANCE)
+
+    def set_hangup_chance(self, context_id: Union[int, str], chance: int) -> None:
+        """Set the hangup chance (0-99, where 0 = always hangs up)"""
+        key = str(context_id)
+        self.hangup_chance[key] = max(0, min(99, int(chance)))
 
     # ───────────── Weights ─────────────
 
@@ -123,6 +137,12 @@ class ConfigOptions:
             if not isinstance(chance, int):
                 raise ConfigValidationError("pickup_chance values must be ints")
 
+        for context_key, chance in self.hangup_chance.items():
+            if not isinstance(context_key, str):
+                raise ConfigValidationError("hangup_chance keys must be strings")
+            if not isinstance(chance, int):
+                raise ConfigValidationError("hangup_chance values must be ints")
+
 
 # ─────────────────────────────────────
 # Singleton
@@ -151,6 +171,13 @@ def load_config() -> None:
             config.pickup_chance = {
                 str(k): int(v)
                 for k, v in data["pickup_chance"].items()
+            }
+
+        # ── hangup_chance ──
+        if "hangup_chance" in data:
+            config.hangup_chance = {
+                str(k): int(v)
+                for k, v in data["hangup_chance"].items()
             }
 
         # ── answer_weights (migration-aware) ──
@@ -186,6 +213,7 @@ def save_config() -> None:
                     "voice_enabled": config.voice_enabled,
                     "answer_weights": config.answer_weights,
                     "pickup_chance": config.pickup_chance,
+                    "hangup_chance": config.hangup_chance,
                 },
                 f,
                 indent=2,

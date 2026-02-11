@@ -8,10 +8,11 @@ from discord import option
 from audio import (
     pick_weighted_ben_answer,
     get_specific_answer,
-    extract_message_from_filename,
-    play_mp3,
+    play_mp3, pick_random_from,
 )
 from config import config, load_config, save_config
+from helpers.audio_helper import HANG_UP_PATH, NO_PATH
+from helpers.sound_inventory import refresh_sound_inventory, get_message_for_sound
 from helpers.config_helper import get_config, get_context_id
 from voice_call.call import join_call, reconnect_call, leave_call
 
@@ -23,6 +24,11 @@ intents = discord.Intents.default()
 intents.voice_states = True
 intents.members = True
 intents.message_content = True  # Required to read DM content
+
+send_params = {
+    "silent": True,
+    "mention_author": False
+}
 
 
 def ensure_opus_loaded() -> None:
@@ -54,6 +60,7 @@ bot = discord.Bot(intents=intents)
 @bot.event
 async def on_ready():
     load_config()
+    refresh_sound_inventory()
 
     await bot.sync_commands()
     await asyncio.sleep(2)
@@ -90,21 +97,18 @@ async def on_message(message):
         answer = pick_weighted_ben_answer(context_id)
 
         if not answer:
-            await message.reply("I don't have any answers available right now.")
+            await message.reply("I don't have any answers available right now.", **send_params)
             return
 
         # Extract message from filename
-        response_text = extract_message_from_filename(answer)
-
-        # Replace _ in response text with :
-        response_text = response_text.replace("_", ":")
+        response_text = get_message_for_sound(answer)
 
         # If in voice channel, play audio (unlikely in DMs, but check anyway)
         if vc and vc.is_connected():
             await play_mp3(vc, answer)
 
         # Send the response as plain text
-        await message.reply("@silent " + response_text)
+        await message.reply(response_text, **send_params)
         return
 
     # Handle server messages that mention "Ben" (capital B)
@@ -127,14 +131,14 @@ async def on_message(message):
         return  # Silently ignore if no answers available in server
 
     # Extract message from filename
-    response_text = extract_message_from_filename(answer)
+    response_text = get_message_for_sound(answer)
 
     # If in voice channel, play audio first
     if vc and vc.is_connected():
         await play_mp3(vc, answer)
 
     # Send the response as plain text
-    await message.reply(response_text)
+    await message.reply(response_text, **send_params)
 
 
 # ─────────────────────────────────────────────
@@ -154,7 +158,7 @@ async def ask(ctx: discord.ApplicationContext, question: str):
         return
 
     # Extract message from filename
-    message = extract_message_from_filename(answer)
+    message = get_message_for_sound(answer)
 
     # Create embed
     if ctx.guild:
@@ -204,7 +208,7 @@ async def say(ctx: discord.ApplicationContext, response_type: str):
         return
 
     # Extract message from filename
-    message = extract_message_from_filename(answer)
+    message = get_message_for_sound(answer)
 
     # Create embed
     embed = discord.Embed(
@@ -234,6 +238,8 @@ async def say(ctx: discord.ApplicationContext, response_type: str):
 @option("yapping_weight", int, min_value=0, max_value=100, required=False)
 @option("pickup_chance", int, min_value=0, max_value=99,
         description="Chance Ben doesn't pick up (0 = always picks up, 19 = 1 in 20)", required=False)
+@option("hangup_chance", int, min_value=0, max_value=99,
+        description="Chance Ben doesn't hang up (0 = always hangs up, 19 = 1 in 20)", required=False)
 async def config(
         ctx: discord.ApplicationContext,
         enable_voice: bool | None = None,
@@ -241,6 +247,7 @@ async def config(
         no_weight: int | None = None,
         yapping_weight: int | None = None,
         pickup_chance: int | None = None,
+        hangup_chance: int | None = None,
 ):
     await ctx.defer(ephemeral=True)
 
@@ -261,16 +268,21 @@ async def config(
     if pickup_chance is not None:
         config.set_pickup_chance(context_id, pickup_chance)
 
+    if hangup_chance is not None:
+        config.set_hangup_chance(context_id, hangup_chance)
+
     save_config()
 
     cfg = get_config(context_id)
-    pickup = config.get_pickup_chance(context_id)
+    fresh_pickup = config.get_pickup_chance(context_id)
+    fresh_hangup = config.get_hangup_chance(context_id)
 
     context_type = "Server" if ctx.guild else "DM"
     response = (
         f"**Talking Ben Configuration ({context_type})**\n\n"
         f"🎙 **voiceTalkToBen**: {cfg.voice_enabled}\n"
-        f"📞 **Pickup Chance**: {pickup} (1 in {pickup + 1} chance he doesn't pick up)\n\n"
+        f"📞 **Pickup Chance**: {fresh_pickup} (1 in {fresh_pickup + 1} chance he doesn't pick up)\n\n"
+        f"📞 **Hangup Chance**: {fresh_hangup} (1 in {fresh_hangup + 1} chance he doesn't hang up)\n\n"
         f"**Answer Probabilities:**\n"
         f"🟢 Yes: {cfg.yes_pct:.1f}%\n"
         f"🔴 No: {cfg.no_pct:.1f}%\n"
@@ -289,12 +301,14 @@ async def ben_status(ctx: discord.ApplicationContext):
     context_id = get_context_id(ctx)
     cfg = get_config(context_id)
     pickup = config.get_pickup_chance(context_id)
+    hangup = config.get_hangup_chance(context_id)
 
     context_type = "Server" if ctx.guild else "DM"
     response = (
         f"**Talking Ben Status ({context_type})**\n\n"
         f"🎙 **voiceTalkToBen**: {cfg.voice_enabled}\n"
         f"📞 **Pickup Chance**: {pickup} (1 in {pickup + 1} chance he doesn't pick up)\n\n"
+        f"📞 **Hangup Chance**: {hangup} (1 in {hangup + 1} chance he doesn't hang up)\n\n"
         f"**Answer Probabilities:**\n"
         f"🟢 Yes: {cfg.yes_pct:.1f}%\n"
         f"🔴 No: {cfg.no_pct:.1f}%\n"
@@ -344,14 +358,11 @@ async def call(ctx: discord.ApplicationContext):
     pickup_chance = config.get_pickup_chance(context_id)
 
     if pickup_chance > 0 and random.randint(0, pickup_chance) == 0:
-        # Ben doesn't pick up
-        embed = discord.Embed(
-            description=f"📞 {ctx.author.mention} tried to call Ben, but he didn't pick up the phone...",
-            color=discord.Color.red()
+        await ben_not_care(
+            ctx,
+            f"📞 {ctx.author.mention} tried to call Ben, but he didn't pick up the phone...",
+            discord.Color.red()
         )
-        embed.set_author(name="Talking Ben", icon_url=bot.user.avatar.url if bot.user.avatar else None)
-
-        await ctx.respond(embed=embed)
         return
 
     # Ben picks up - announce in chat
@@ -368,7 +379,7 @@ async def call(ctx: discord.ApplicationContext):
     await join_call(channel, vc, context_id, ctx)
 
     # Send the announcement
-    await ctx.respond(embed=embed)
+    await ctx.respond(embed=embed, **send_params)
 
 
 # ─────────────────────────────────────────────
@@ -383,6 +394,23 @@ async def hangup(ctx: discord.ApplicationContext):
         await ctx.respond("Ben isn't connected.", ephemeral=True)
         return
 
+    context_id = get_context_id(ctx)
+
+    # Check if Ben picks up the phone
+    hangup_chance = config.get_hangup_chance(context_id)
+
+    if hangup_chance > 0 and random.randint(0, hangup_chance) == 0:
+        # Play no sound
+        await play_mp3(vc, NO_PATH)
+
+        # Ben doesn't hang up
+        await ben_not_care(
+            ctx,
+            f"📞 {ctx.author.mention} tried to hang up on Ben, but Ben has no interest in hanging up...",
+            discord.Color.red()
+        )
+        return
+
     await ctx.defer()
     await leave_call(vc)
 
@@ -392,7 +420,21 @@ async def hangup(ctx: discord.ApplicationContext):
     )
     embed.set_author(name="Talking Ben", icon_url=bot.user.avatar.url if bot.user.avatar else None)
 
-    await ctx.respond(embed=embed)
+    await ctx.respond(embed=embed, **send_params)
+
+
+# ─────────────────────────────────────────────
+# Ben doesn't care about your bs
+# ─────────────────────────────────────────────
+async def ben_not_care(ctx: discord.ApplicationContext, message: str, color: discord.colour.Colour = discord.Color.red()):
+    # Ben doesn't pick up
+    embed = discord.Embed(
+        description=message,
+        color=color
+    )
+    embed.set_author(name="Talking Ben", icon_url=bot.user.avatar.url if bot.user.avatar else None)
+
+    await ctx.respond(embed=embed, **send_params)
 
 
 # ─────────────────────────────────────────────
