@@ -105,21 +105,50 @@ async def reconnect_call(bot: discord.Bot):
 
 
 async def leave_call(vc: discord.VoiceClient):
+    """
+    Safely disconnect from voice call with proper cleanup.
+    This function ensures the sink and monitor task are properly cleaned up
+    before disconnecting to prevent race conditions.
+    """
+    # Play hangup sound first
     hang = pick_random_from(HANG_UP_PATH)
     if hang:
         await play_mp3(vc, hang)
         await asyncio.sleep(0.5)
 
+    # Stop recording and clean up sink BEFORE disconnecting
+    # This prevents the sink from processing audio during cleanup
     try:
-        # Clean up the sink before stopping recording
-        if hasattr(vc, 'sink') and vc.sink:
-            if hasattr(vc.sink, 'cleanup'):
-                vc.sink.cleanup()
+        if getattr(vc, "recording", False):
+            # Get the sink before stopping recording
+            sink = vc.sink
 
-        vc.stop_recording()
+            # Cancel the monitor task first to prevent it from interfering
+            if sink and hasattr(sink, 'monitor_task') and sink.monitor_task:
+                sink.monitor_task.cancel()
+                try:
+                    await sink.monitor_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    print(f"[Leave] Error canceling monitor task: {e}")
+
+            # Now stop recording - this will trigger the finished_callback
+            vc.stop_recording()
+
+            # Give the recording system time to finish cleanup
+            await asyncio.sleep(0.3)
+
+            # Clean up the sink explicitly
+            if sink and hasattr(sink, 'cleanup'):
+                try:
+                    sink.cleanup()
+                except Exception as e:
+                    print(f"[Leave] Error during sink cleanup: {e}")
     except Exception as e:
         print(f"[Leave] Error stopping recording: {e}")
 
+    # Now it's safe to disconnect
     try:
         await vc.disconnect(force=True)
     except Exception as e:

@@ -56,6 +56,9 @@ ensure_opus_loaded()
 
 bot = discord.Bot(intents=intents)
 
+# Track busy states per guild to prevent overlapping operations
+busy_guilds = set()
+
 
 @bot.event
 async def on_ready():
@@ -329,6 +332,13 @@ async def ben_status(ctx: discord.ApplicationContext):
 async def call(ctx: discord.ApplicationContext):
     # For guilds, check member voice state
     if ctx.guild:
+        guild_id = ctx.guild.id
+
+        # Check if Ben is busy with another operation in this guild
+        if guild_id in busy_guilds:
+            await ctx.respond("Ben is busy right now, please wait...", ephemeral=True)
+            return
+
         member = ctx.guild.get_member(ctx.author.id) or await ctx.guild.fetch_member(ctx.author.id)
 
         if not member.voice or not member.voice.channel:
@@ -369,21 +379,28 @@ async def call(ctx: discord.ApplicationContext):
         )
         return
 
-    # Ben picks up - announce in chat
-    embed = discord.Embed(
-        description=f"📞 {ctx.author.mention} called Ben!",
-        color=discord.Color.green()
-    )
-    embed.set_author(name="Talking Ben", icon_url=bot.user.avatar.url if bot.user.avatar else None)
+    # Mark guild as busy
+    busy_guilds.add(guild_id)
 
-    # Defer to give us time to connect
-    await ctx.defer()
+    try:
+        # Ben picks up - announce in chat
+        embed = discord.Embed(
+            description=f"📞 {ctx.author.mention} called Ben!",
+            color=discord.Color.green()
+        )
+        embed.set_author(name="Talking Ben", icon_url=bot.user.avatar.url if bot.user.avatar else None)
 
-    # Join the call
-    await join_call(channel, vc, context_id, ctx)
+        # Defer to give us time to connect
+        await ctx.defer()
 
-    # Send the announcement (no send_params because we used defer - it goes through webhook)
-    await ctx.respond(embed=embed)
+        # Join the call
+        await join_call(channel, vc, context_id, ctx)
+
+        # Send the announcement (no send_params because we used defer - it goes through webhook)
+        await ctx.respond(embed=embed)
+    finally:
+        # Always remove busy state when done
+        busy_guilds.discard(guild_id)
 
 
 # ─────────────────────────────────────────────
@@ -398,40 +415,57 @@ async def hangup(ctx: discord.ApplicationContext):
         await ctx.respond("Ben isn't connected.", ephemeral=True)
         return
 
-    context_id = get_context_id(ctx)
+    # For guilds, check if Ben is busy
+    if ctx.guild:
+        guild_id = ctx.guild.id
 
-    # Check if Ben picks up the phone
-    hangup_chance = config.get_hangup_chance(context_id)
+        if guild_id in busy_guilds:
+            await ctx.respond("Ben is busy right now, please wait...", ephemeral=True)
+            return
 
-    if hangup_chance > 0 and random.randint(0, hangup_chance) == 0:
-        # Play no sound
-        await play_mp3(vc, NO_PATH)
+        # Mark guild as busy
+        busy_guilds.add(guild_id)
 
-        # Ben doesn't hang up
-        await ben_not_care(
-            ctx,
-            f"📞 {ctx.author.mention} tried to hang up on Ben, but Ben has no interest in hanging up...",
-            discord.Color.red()
+    try:
+        context_id = get_context_id(ctx)
+
+        # Check if Ben picks up the phone
+        hangup_chance = config.get_hangup_chance(context_id)
+
+        if hangup_chance > 0 and random.randint(0, hangup_chance) == 0:
+            # Play no sound
+            await play_mp3(vc, NO_PATH)
+
+            # Ben doesn't hang up
+            await ben_not_care(
+                ctx,
+                f"📞 {ctx.author.mention} tried to hang up on Ben, but Ben has no interest in hanging up...",
+                discord.Color.red()
+            )
+            return
+
+        await ctx.defer()
+        await leave_call(vc)
+
+        embed = discord.Embed(
+            description=f"☎️ {ctx.author.mention} hung up on Ben.",
+            color=discord.Color.orange()
         )
-        return
+        embed.set_author(name="Talking Ben", icon_url=bot.user.avatar.url if bot.user.avatar else None)
 
-    await ctx.defer()
-    await leave_call(vc)
-
-    embed = discord.Embed(
-        description=f"☎️ {ctx.author.mention} hung up on Ben.",
-        color=discord.Color.orange()
-    )
-    embed.set_author(name="Talking Ben", icon_url=bot.user.avatar.url if bot.user.avatar else None)
-
-    # No send_params because we used defer - it goes through webhook
-    await ctx.respond(embed=embed)
+        # No send_params because we used defer - it goes through webhook
+        await ctx.respond(embed=embed)
+    finally:
+        # Always remove busy state when done
+        if ctx.guild:
+            busy_guilds.discard(ctx.guild.id)
 
 
 # ─────────────────────────────────────────────
 # Ben doesn't care about your bs
 # ─────────────────────────────────────────────
-async def ben_not_care(ctx: discord.ApplicationContext, message: str, color: discord.colour.Colour = discord.Color.red()):
+async def ben_not_care(ctx: discord.ApplicationContext, message: str,
+                       color: discord.colour.Colour = discord.Color.red()):
     # Ben doesn't pick up
     embed = discord.Embed(
         description=message,
