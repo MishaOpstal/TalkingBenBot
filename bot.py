@@ -75,6 +75,10 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
+    # Ignore system messages (cannot reply to them)
+    if message.type != discord.MessageType.default:
+        return
+
     # Ignore messages that start with / (commands)
     if message.content.startswith('/'):
         return

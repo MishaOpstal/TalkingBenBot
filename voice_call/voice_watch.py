@@ -8,7 +8,6 @@ import time
 import os
 from typing import Union
 
-
 import discord
 from vosk import Model, KaldiRecognizer
 
@@ -49,7 +48,8 @@ class BenSink(discord.sinks.Sink):
         super().__init__(filters=None)
         self.context_id = context_id
         self.monitor_task = None  # Track the monitor task
-        self.reset_session(full=True)
+        self.recognizer = self._new_recognizer()  # Initialize recognizer immediately
+        self.reset_session(full=False)  # Don't recreate recognizer in reset
         self.config = get_config(context_id)
 
     # ───────── Helpers ─────────
@@ -72,7 +72,7 @@ class BenSink(discord.sinks.Sink):
         self.ack_played = False
         self.too_short_played = False
 
-        if full:
+        if full and hasattr(self, 'recognizer'):
             self.recognizer = self._new_recognizer()
 
     def cleanup(self):
@@ -86,6 +86,10 @@ class BenSink(discord.sinks.Sink):
 
     # ───────── Audio Input ─────────
     def write(self, pcm: bytes, user_id: int) -> None:
+        # Safety check: make sure recognizer exists
+        if not hasattr(self, 'recognizer') or self.recognizer is None:
+            return
+
         now = time.monotonic()
 
         # ─────────────────────────
