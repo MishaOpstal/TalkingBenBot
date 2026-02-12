@@ -8,9 +8,22 @@ import discord
 
 from helpers.audio_helper import get_audio_files, ANSWER_PATH, YAPPING_PATH, YES_PATH, NO_PATH
 from helpers.config_helper import get_config
+from exceptions import SoundNotFound, AudioPlaybackFailed
 
 
 def pick_random_from(path: str) -> str | None:
+    """
+    Pick a random audio file from a directory.
+
+    Args:
+        path: Directory path to search for audio files
+
+    Returns:
+        Random file path or None if no files found
+
+    Raises:
+        SoundNotFound: If the directory doesn't exist or contains no audio files
+    """
     files = get_audio_files(path)
     if not files:
         return None
@@ -33,6 +46,9 @@ def pick_weighted_ben_answer(context_id: Union[int, str]) -> str | None:
     Example: yes=10, no=10, yapping=2 with 5 yapping files
     → Pool has 10 yes + 10 no + 10 yapping (2*5) = 30 total
     → Yes: 33%, No: 33%, Yapping: 33% (distributed among 5 files)
+
+    Returns:
+        Path to selected audio file or None if no sounds available
     """
     yaps = get_audio_files(YAPPING_PATH)
 
@@ -69,13 +85,23 @@ def get_specific_answer(answer_type: str) -> str | None:
 
     Returns:
         Path to the audio file, or None if not found
+
+    Raises:
+        SoundNotFound: If the requested answer type file doesn't exist
     """
     if answer_type == "yes":
-        return YES_PATH if os.path.isfile(YES_PATH) else None
+        if not os.path.isfile(YES_PATH):
+            raise SoundNotFound(f"Yes sound file not found at {YES_PATH}")
+        return YES_PATH
     elif answer_type == "no":
-        return NO_PATH if os.path.isfile(NO_PATH) else None
+        if not os.path.isfile(NO_PATH):
+            raise SoundNotFound(f"No sound file not found at {NO_PATH}")
+        return NO_PATH
     elif answer_type == "yap":
-        return pick_random_from(YAPPING_PATH)
+        result = pick_random_from(YAPPING_PATH)
+        if not result:
+            raise SoundNotFound(f"No yapping sounds found in {YAPPING_PATH}")
+        return result
 
     return None
 
@@ -113,12 +139,24 @@ async def play_mp3(vc: discord.VoiceClient, file_path: str, delay: float = 0.025
     """
     Play an MP3 file into a Discord voice channel.
     Safe for headless / Docker environments.
+
+    Args:
+        vc: Discord voice client
+        file_path: Path to the MP3 file
+        delay: Delay between playback checks in seconds
+
+    Raises:
+        SoundNotFound: If the audio file doesn't exist
+        AudioPlaybackFailed: If playback fails
     """
-    if not file_path or not os.path.isfile(file_path):
-        return
+    if not file_path:
+        raise SoundNotFound("No file path provided")
+
+    if not os.path.isfile(file_path):
+        raise SoundNotFound(f"Audio file not found: {file_path}")
 
     if not vc or not vc.is_connected():
-        return
+        raise AudioPlaybackFailed("Voice client not connected")
 
     if vc.is_playing():
         return
@@ -126,27 +164,48 @@ async def play_mp3(vc: discord.VoiceClient, file_path: str, delay: float = 0.025
     # ── Handle Stage Channels ──
     # If in a stage channel, we must ensure we are not suppressed (are a speaker)
     if isinstance(vc.channel, discord.StageChannel):
-        await ensure_unsuppressed(vc.guild)
+        try:
+            await ensure_unsuppressed(vc.guild)
+        except Exception as e:
+            raise AudioPlaybackFailed(f"Failed to unsuppress in stage channel: {e}")
 
-    audio_source = discord.FFmpegPCMAudio(
-        file_path,
-        options="-loglevel panic"
-    )
+    try:
+        audio_source = discord.FFmpegPCMAudio(
+            file_path,
+            options="-loglevel panic"
+        )
 
-    vc.play(audio_source)
+        vc.play(audio_source)
 
-    # Wait until playback finishes
-    while vc.is_playing():
-        await asyncio.sleep(delay)
+        # Wait until playback finishes
+        while vc.is_playing():
+            await asyncio.sleep(delay)
+    except Exception as e:
+        raise AudioPlaybackFailed(f"Failed to play audio: {e}")
 
 
 async def play_mp3_sequence(vc: discord.VoiceClient, files: list[str]) -> None:
     """
     Play a sequence of MP3 files into a Discord voice channel.
     Safe for headless / Docker environments.
+
+    Args:
+        vc: Discord voice client
+        files: List of file paths to play in sequence
+
+    Raises:
+        SoundNotFound: If any audio file doesn't exist
+        AudioPlaybackFailed: If playback fails
     """
     for file in files:
-        await play_mp3(vc, file, .7)
+        try:
+            await play_mp3(vc, file, .7)
+        except SoundNotFound as e:
+            print(f"[Audio Warning] Skipping missing file in sequence: {e}")
+            continue
+        except AudioPlaybackFailed as e:
+            print(f"[Audio Warning] Failed to play file in sequence: {e}")
+            continue
 
 
 async def ensure_unsuppressed(guild: discord.Guild) -> bool:
@@ -156,6 +215,12 @@ async def ensure_unsuppressed(guild: discord.Guild) -> bool:
 
     CRITICAL: Only call request_to_speak() when suppressed (in audience).
     Calling it when already a speaker makes you raise your hand and go back to audience!
+
+    Args:
+        guild: The Discord guild
+
+    Returns:
+        True if successfully unsuppressed, False otherwise
     """
     me = guild.me
     if not me or not me.voice or not isinstance(me.voice.channel, discord.StageChannel):

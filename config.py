@@ -2,6 +2,8 @@ import json
 import os
 from typing import Dict, Union
 
+from exceptions import ConfigException, InvalidWeight, InvalidChance
+
 CONFIG_PATH = "data/config.json"
 
 DEFAULT_WEIGHTS: Dict[str, int] = {
@@ -14,7 +16,8 @@ DEFAULT_PICKUP_CHANCE = 19  # 1 in 20 chance Ben doesn't pick up (0 = always pic
 DEFAULT_HANGUP_CHANCE = 5  # 1 in 20
 
 
-class ConfigValidationError(Exception):
+class ConfigValidationError(ConfigException):
+    """Raised when configuration validation fails"""
     pass
 
 
@@ -40,40 +43,101 @@ class ConfigOptions:
     # ───────────── Voice ─────────────
 
     def is_voice_enabled(self, context_id: Union[int, str]) -> bool:
+        """Check if voice recognition is enabled for a context"""
         key = str(context_id)
         return self.voice_enabled.get(key, False)
 
     def set_voice_enabled(self, context_id: Union[int, str], enabled: bool) -> None:
+        """
+        Enable or disable voice recognition for a context
+
+        Args:
+            context_id: Guild ID or DM context string
+            enabled: Whether to enable voice recognition
+        """
         key = str(context_id)
         self.voice_enabled[key] = enabled
 
     # ───────────── Pickup Chance ─────────────
 
     def get_pickup_chance(self, context_id: Union[int, str]) -> int:
-        """Get the pickup chance (0 = always picks up, 19 = 1 in 20 doesn't pick up)"""
+        """
+        Get the pickup chance (0 = always picks up, 19 = 1 in 20 doesn't pick up)
+
+        Args:
+            context_id: Guild ID or DM context string
+
+        Returns:
+            Pickup chance value (0-99)
+        """
         key = str(context_id)
         return self.pickup_chance.get(key, DEFAULT_PICKUP_CHANCE)
 
     def set_pickup_chance(self, context_id: Union[int, str], chance: int) -> None:
-        """Set the pickup chance (0-99, where 0 = always picks up)"""
+        """
+        Set the pickup chance (0-99, where 0 = always picks up)
+
+        Args:
+            context_id: Guild ID or DM context string
+            chance: Pickup chance (0-99)
+
+        Raises:
+            InvalidChance: If chance is not between 0 and 99
+        """
+        if not isinstance(chance, int):
+            raise InvalidChance(f"Pickup chance must be an integer, got {type(chance).__name__}")
+        if chance < 0 or chance > 99:
+            raise InvalidChance(f"Pickup chance must be between 0 and 99, got {chance}")
+
         key = str(context_id)
-        self.pickup_chance[key] = max(0, min(99, int(chance)))
+        self.pickup_chance[key] = chance
 
     # ───────────── Hangup Chance ─────────────
 
     def get_hangup_chance(self, context_id: Union[int, str]) -> int:
-        """Get the hangup chance (0 = always hangs up, 19 = 1 in 20 doesn't hang up)"""
+        """
+        Get the hangup chance (0 = always hangs up, 19 = 1 in 20 doesn't hang up)
+
+        Args:
+            context_id: Guild ID or DM context string
+
+        Returns:
+            Hangup chance value (0-99)
+        """
         key = str(context_id)
         return self.hangup_chance.get(key, DEFAULT_HANGUP_CHANCE)
 
     def set_hangup_chance(self, context_id: Union[int, str], chance: int) -> None:
-        """Set the hangup chance (0-99, where 0 = always hangs up)"""
+        """
+        Set the hangup chance (0-99, where 0 = always hangs up)
+
+        Args:
+            context_id: Guild ID or DM context string
+            chance: Hangup chance (0-99)
+
+        Raises:
+            InvalidChance: If chance is not between 0 and 99
+        """
+        if not isinstance(chance, int):
+            raise InvalidChance(f"Hangup chance must be an integer, got {type(chance).__name__}")
+        if chance < 0 or chance > 99:
+            raise InvalidChance(f"Hangup chance must be between 0 and 99, got {chance}")
+
         key = str(context_id)
-        self.hangup_chance[key] = max(0, min(99, int(chance)))
+        self.hangup_chance[key] = chance
 
     # ───────────── Weights ─────────────
 
     def get_weights(self, context_id: Union[int, str]) -> Dict[str, int]:
+        """
+        Get answer weights for a context
+
+        Args:
+            context_id: Guild ID or DM context string
+
+        Returns:
+            Dictionary of answer type to weight
+        """
         key = str(context_id)
         weights = self.answer_weights.get(key)
         if weights is None:
@@ -84,15 +148,37 @@ class ConfigOptions:
         return weights
 
     def set_weight(self, context_id: Union[int, str], answer_type: str, weight: int) -> None:
+        """
+        Set the weight for a specific answer type
+
+        Args:
+            context_id: Guild ID or DM context string
+            answer_type: Type of answer ("yes", "no", "yapping")
+            weight: Weight value (0-100)
+
+        Raises:
+            InvalidWeight: If weight is not between 0 and 100
+        """
+        if not isinstance(weight, int):
+            raise InvalidWeight(f"Weight must be an integer, got {type(weight).__name__}")
+        if weight < 0 or weight > 100:
+            raise InvalidWeight(f"Weight must be between 0 and 100, got {weight}")
+
         key = str(context_id)
         weights = self.get_weights(key)
-        weights[answer_type] = max(0, int(weight))
+        weights[answer_type] = weight
         self._normalize_weights(weights)
 
     # ───────────── Normalization ─────────────
 
     @staticmethod
     def _normalize_weights(weights: Dict[str, int]) -> None:
+        """
+        Normalize weights dictionary to ensure all required keys exist
+
+        Args:
+            weights: Dictionary of weights to normalize
+        """
         for key in DEFAULT_WEIGHTS:
             if key not in weights:
                 weights[key] = DEFAULT_WEIGHTS[key]
@@ -104,6 +190,12 @@ class ConfigOptions:
     # ───────────── Validation ─────────────
 
     def validate(self) -> None:
+        """
+        Validate configuration data structure
+
+        Raises:
+            ConfigValidationError: If validation fails
+        """
         if not isinstance(self.voice_enabled, dict):
             raise ConfigValidationError("voice_enabled must be a dict")
 
@@ -112,6 +204,9 @@ class ConfigOptions:
 
         if not isinstance(self.pickup_chance, dict):
             raise ConfigValidationError("pickup_chance must be a dict")
+
+        if not isinstance(self.hangup_chance, dict):
+            raise ConfigValidationError("hangup_chance must be a dict")
 
         for context_key, enabled in self.voice_enabled.items():
             if not isinstance(context_key, str):
@@ -151,6 +246,12 @@ config = ConfigOptions()
 
 
 def load_config() -> None:
+    """
+    Load configuration from JSON file
+
+    Raises:
+        ConfigException: If loading or validation fails
+    """
     if not os.path.isfile(CONFIG_PATH):
         return
 
@@ -199,11 +300,21 @@ def load_config() -> None:
 
         config.validate()
 
+    except json.JSONDecodeError as e:
+        raise ConfigException(f"Failed to parse config JSON: {e}")
+    except ConfigValidationError as e:
+        raise ConfigException(f"Config validation failed: {e}")
     except Exception as e:
-        print(f"[Config] Failed to load config: {e}")
+        raise ConfigException(f"Failed to load config: {e}")
 
 
 def save_config() -> None:
+    """
+    Save configuration to JSON file
+
+    Raises:
+        ConfigException: If saving fails
+    """
     try:
         os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
 
@@ -219,5 +330,7 @@ def save_config() -> None:
                 indent=2,
             )
 
+    except OSError as e:
+        raise ConfigException(f"Failed to save config (OS error): {e}")
     except Exception as e:
-        print(f"[Config] Failed to save config: {e}")
+        raise ConfigException(f"Failed to save config: {e}")

@@ -14,6 +14,7 @@ from vosk import Model, KaldiRecognizer
 
 from audio import pick_weighted_ben_answer, play_mp3
 from helpers.config_helper import get_config
+from exceptions import AudioPlaybackFailed, SoundNotFound
 
 # Debug voice recognition flag
 DEBUG_VOICE = os.environ.get("DEBUG_VOICE", "false").lower() in ("true", "1", "yes")
@@ -40,10 +41,24 @@ VOSK_MODEL_PATH = "/app/models/vosk"
 # ─────────────────────────────────────────────
 # Load Vosk once
 # ─────────────────────────────────────────────
-vosk_model = Model(VOSK_MODEL_PATH)
+try:
+    vosk_model = Model(VOSK_MODEL_PATH)
+    print(f"[Vosk] Successfully loaded model from {VOSK_MODEL_PATH}")
+except Exception as e:
+    print(f"[Vosk Error] Failed to load model: {e}")
+    vosk_model = None
 
 
 def pcm_rms(pcm: bytes) -> float:
+    """
+    Calculate RMS (Root Mean Square) of PCM audio data
+
+    Args:
+        pcm: Raw PCM audio bytes
+
+    Returns:
+        RMS value as float
+    """
     if not pcm:
         return 0.0
 
@@ -56,23 +71,41 @@ def pcm_rms(pcm: bytes) -> float:
 
 
 class BenSink(discord.sinks.Sink):
+    """
+    Custom audio sink for capturing and processing voice audio
+    Handles wake word detection and speech recognition
+    """
+
     def __init__(self, context_id: Union[int, str]):
         super().__init__(filters=None)
         self.context_id = context_id
         self.monitor_task = None  # Track the monitor task
         self._recognizer_lock = threading.Lock()  # Thread safety for recognizer access
-        self.recognizer = self._new_recognizer()  # Initialize recognizer immediately
+
+        # Initialize recognizer if model is loaded
+        if vosk_model is not None:
+            self.recognizer = self._new_recognizer()
+        else:
+            self.recognizer = None
+            print(f"[BenSink] Cannot initialize recognizer - Vosk model not loaded")
+
         self.reset_session(full=False)  # Don't recreate recognizer in reset
         self.config = get_config(context_id)
 
     # ───────── Helpers ─────────
     def _new_recognizer(self):
+        """Create a new Vosk recognizer instance"""
+        if vosk_model is None:
+            return None
         recognizer = KaldiRecognizer(vosk_model, 16000)
         recognizer.SetWords(False)
         return recognizer
 
     def _safe_replace_recognizer(self) -> None:
         """Thread-safe recognizer replacement that cleans up old one"""
+        if vosk_model is None:
+            return
+
         with self._recognizer_lock:
             try:
                 if self.recognizer is not None:
@@ -90,6 +123,12 @@ class BenSink(discord.sinks.Sink):
                     self.recognizer = self._new_recognizer()
 
     def reset_session(self, full: bool = False):
+        """
+        Reset the voice recognition session
+
+        Args:
+            full: If True, also recreate the recognizer
+        """
         self.ben_activated = False
         self.active_user_id = None
 
@@ -126,6 +165,17 @@ class BenSink(discord.sinks.Sink):
 
     # ───────── Audio Input ─────────
     def write(self, pcm: bytes, user_id: int) -> None:
+        """
+        Process incoming audio data from a user
+
+        Args:
+            pcm: Raw PCM audio bytes
+            user_id: Discord user ID of the speaker
+        """
+        # Skip if recognizer not available
+        if self.recognizer is None:
+            return
+
         # Thread-safe recognizer access
         with self._recognizer_lock:
             # Safety check: make sure recognizer exists
@@ -142,7 +192,8 @@ class BenSink(discord.sinks.Sink):
                 mono_16k, _ = audioop.ratecv(
                     mono, 2, 1, 48000, 16000, None
                 )
-            except Exception:
+            except Exception as e:
+                print(f"[BenSink] Error processing audio: {e}")
                 return
 
             # ─────────────────────────
@@ -161,6 +212,8 @@ class BenSink(discord.sinks.Sink):
                         print(f"[VoiceDebug] Partial from user {user_id}: '{text}'")
             except Exception as e:
                 # Handle any recognition errors gracefully
+                if DEBUG_VOICE:
+                    print(f"[VoiceDebug] Recognition error: {e}")
                 return
 
         # ─────────────────────────
@@ -223,6 +276,14 @@ async def monitor_silence(
         vc: discord.VoiceClient,
         sink: BenSink
 ):
+    """
+    Monitor for silence and respond when appropriate
+
+    Args:
+        context_id: Guild ID or DM context string
+        vc: Discord voice client
+        sink: BenSink instance handling audio
+    """
     # Import here to avoid circular import
     from voice_call.call import leave_call
 
@@ -270,14 +331,22 @@ async def monitor_silence(
         random_chance: int = random.randint(0, 500)
         if random_chance == 250:
             sink.reset_session(full=True)
-            await leave_call(vc)
+            try:
+                await leave_call(vc)
+            except Exception as e:
+                print(f"[Monitor] Error during random hangup: {e}")
             continue
 
         # ─────────────────────────
         # Ben answers (never interruptible)
         # ─────────────────────────
-        answer = pick_weighted_ben_answer(context_id)
-        if answer:
-            await play_mp3(vc, answer)
+        try:
+            answer = pick_weighted_ben_answer(context_id)
+            if answer:
+                await play_mp3(vc, answer)
+        except (SoundNotFound, AudioPlaybackFailed) as e:
+            print(f"[Monitor] Failed to play answer: {e}")
+        except Exception as e:
+            print(f"[Monitor] Unexpected error playing answer: {e}")
 
         sink.reset_session(full=True)
