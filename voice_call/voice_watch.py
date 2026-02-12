@@ -28,6 +28,7 @@ MAX_IDLE_AFTER_WAKE = 5.0
 
 WAKE_WORDS = (
     "ben",
+    "nep",
     "pen",
     "men",
     "bin",
