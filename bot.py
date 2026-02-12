@@ -441,12 +441,22 @@ async def hangup(ctx: discord.ApplicationContext):
             # Play no sound
             await play_mp3(vc, NO_PATH)
 
+            # Sleep
+            await asyncio.sleep(0.5)
+
             # Ben doesn't hang up
             await ben_not_care(
                 ctx,
-                f"📞 {ctx.author.mention} tried to hang up on Ben, but Ben has no interest in hanging up...",
+                f"📞 {ctx.author.mention} tried to hang up on Ben, Ben did not like that",
                 discord.Color.red()
             )
+
+            # How about we disconnect the user who attempted to hang up on Ben
+            member = ctx.guild.get_member(ctx.author.id) or await ctx.guild.fetch_member(ctx.author.id)
+
+            # If member is still connected to the vc
+            if member.voice and member.voice.channel:
+                await member.move_to(None)
             return
 
         await ctx.defer()
