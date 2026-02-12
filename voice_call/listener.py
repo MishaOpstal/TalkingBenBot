@@ -4,7 +4,13 @@ from typing import Union
 import discord
 
 from voice_call.voice_watch import BenSink, monitor_silence
-from exceptions import RecordingStartFailed
+
+
+# Import exception from call module to avoid duplication
+def _get_recording_exception():
+    """Lazy import to avoid circular dependency"""
+    from voice_call.call import RecordingStartFailed
+    return RecordingStartFailed
 
 
 async def start_listening(
@@ -26,6 +32,7 @@ async def start_listening(
     Raises:
         RecordingStartFailed: If recording fails to start
     """
+    RecordingStartFailed = _get_recording_exception()
 
     async def finished_callback(sink, *args):
         # Clean up the monitor task when recording stops

@@ -2,8 +2,6 @@ import json
 import os
 from typing import Dict, Union
 
-from exceptions import ConfigException, InvalidWeight, InvalidChance
-
 CONFIG_PATH = "data/config.json"
 
 DEFAULT_WEIGHTS: Dict[str, int] = {
@@ -14,6 +12,25 @@ DEFAULT_WEIGHTS: Dict[str, int] = {
 
 DEFAULT_PICKUP_CHANCE = 19  # 1 in 20 chance Ben doesn't pick up (0 = always picks up, 19 = 1 in 20)
 DEFAULT_HANGUP_CHANCE = 5  # 1 in 20
+
+
+# Define exceptions locally to avoid circular imports
+class ConfigException(Exception):
+    """Base exception for configuration-related errors"""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
+class InvalidWeight(ConfigException):
+    """Raised when an invalid weight value is provided"""
+    pass
+
+
+class InvalidChance(ConfigException):
+    """Raised when an invalid chance value is provided"""
+    pass
 
 
 class ConfigValidationError(ConfigException):

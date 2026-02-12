@@ -9,17 +9,35 @@ from audio import (
     play_mp3,
     play_mp3_sequence,
     ensure_unsuppressed,
-)
-from helpers.audio_helper import CALL_PATH, HANG_UP_PATH
-from voice_call.listener import start_listening
-from exceptions import (
-    VoiceException,
-    VoiceJoinFailed,
-    VoiceNotConnected,
-    RecordingStartFailed,
     AudioPlaybackFailed,
     SoundNotFound,
 )
+from helpers.audio_helper import CALL_PATH, HANG_UP_PATH
+from voice_call.listener import start_listening
+
+
+# Define voice exceptions locally to avoid circular imports
+class VoiceException(Exception):
+    """Base exception for voice-related errors"""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
+class VoiceJoinFailed(VoiceException):
+    """Raised when joining a voice channel fails"""
+    pass
+
+
+class VoiceNotConnected(VoiceException):
+    """Raised when attempting an operation that requires voice connection"""
+    pass
+
+
+class RecordingStartFailed(VoiceException):
+    """Raised when starting audio recording fails"""
+    pass
 
 
 async def join_call(

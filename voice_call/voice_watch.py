@@ -12,9 +12,8 @@ from typing import Union, Optional
 import discord
 from vosk import Model, KaldiRecognizer
 
-from audio import pick_weighted_ben_answer, play_mp3
+from audio import pick_weighted_ben_answer, play_mp3, AudioPlaybackFailed, SoundNotFound
 from helpers.config_helper import get_config
-from exceptions import AudioPlaybackFailed, SoundNotFound
 
 # Debug voice recognition flag
 DEBUG_VOICE = os.environ.get("DEBUG_VOICE", "false").lower() in ("true", "1", "yes")

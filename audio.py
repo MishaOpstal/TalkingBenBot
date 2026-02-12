@@ -8,7 +8,25 @@ import discord
 
 from helpers.audio_helper import get_audio_files, ANSWER_PATH, YAPPING_PATH, YES_PATH, NO_PATH
 from helpers.config_helper import get_config
-from exceptions import SoundNotFound, AudioPlaybackFailed
+
+
+# Define audio exceptions locally to avoid circular imports
+class AudioException(Exception):
+    """Base exception for audio-related errors"""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
+class SoundNotFound(AudioException):
+    """Raised when a sound file cannot be found"""
+    pass
+
+
+class AudioPlaybackFailed(AudioException):
+    """Raised when audio playback fails"""
+    pass
 
 
 def pick_random_from(path: str) -> str | None:
