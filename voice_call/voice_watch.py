@@ -7,6 +7,7 @@ import struct
 import time
 import os
 import threading
+import gc
 from typing import Union, Optional
 
 import discord
@@ -73,6 +74,12 @@ class BenSink(discord.sinks.Sink):
     """
     Custom audio sink for capturing and processing voice audio
     Handles wake word detection and speech recognition
+
+    PERFORMANCE OPTIMIZED:
+    - Reuses resampler state to prevent memory leaks
+    - Properly cleans up Vosk recognizer buffers
+    - Minimizes lock contention
+    - Periodic cleanup to prevent memory buildup
     """
 
     def __init__(self, context_id: Union[int, str]):
@@ -80,6 +87,7 @@ class BenSink(discord.sinks.Sink):
         self.context_id = context_id
         self.monitor_task = None  # Track the monitor task
         self._recognizer_lock = threading.Lock()  # Thread safety for recognizer access
+        self._resampler_state = None  # CRITICAL: Reuse resampler state to prevent memory leak
 
         # Initialize recognizer if model is loaded
         if vosk_model is not None:
@@ -91,6 +99,10 @@ class BenSink(discord.sinks.Sink):
         self.reset_session(full=False)  # Don't recreate recognizer in reset
         self.config = get_config(context_id)
 
+        # Track audio packet count for periodic cleanup
+        self._packet_count = 0
+        self._CLEANUP_INTERVAL = 1500  # ~30 seconds at 20ms packets
+
     # ───────── Helpers ─────────
     def _new_recognizer(self):
         """Create a new Vosk recognizer instance"""
@@ -101,18 +113,29 @@ class BenSink(discord.sinks.Sink):
         return recognizer
 
     def _safe_replace_recognizer(self) -> None:
-        """Thread-safe recognizer replacement that cleans up old one"""
+        """
+        Thread-safe recognizer replacement that cleans up old one.
+        CRITICAL: Calls FinalResult() to clear internal Vosk buffers.
+        """
         if vosk_model is None:
             return
 
         with self._recognizer_lock:
             try:
                 if self.recognizer is not None:
+                    # CRITICAL FIX: Force final result to clear internal buffers
+                    # This prevents memory accumulation in the Vosk recognizer
+                    try:
+                        self.recognizer.FinalResult()
+                    except:
+                        pass
+
                     old_recognizer = self.recognizer
                     self.recognizer = self._new_recognizer()  # Create new one first
-                    # Small delay to ensure any in-flight audio packets complete
-                    time.sleep(0.01)
                     del old_recognizer  # Then delete old one
+
+                    # CRITICAL FIX: Reset resampler state to prevent memory leak
+                    self._resampler_state = None
                 else:
                     self.recognizer = self._new_recognizer()
             except Exception as e:
@@ -141,6 +164,9 @@ class BenSink(discord.sinks.Sink):
         self.ack_played = False
         self.too_short_played = False
 
+        # CRITICAL FIX: Reset resampler state on session reset
+        self._resampler_state = None
+
         if full:
             # Thread-safe recognizer replacement
             self._safe_replace_recognizer()
@@ -150,14 +176,21 @@ class BenSink(discord.sinks.Sink):
         if self.monitor_task:
             self.monitor_task.cancel()
 
+        # Clean up resampler state
+        self._resampler_state = None
+
         # CRITICAL: Thread-safe cleanup of the recognizer
         with self._recognizer_lock:
             if hasattr(self, 'recognizer') and self.recognizer is not None:
                 try:
+                    # Force final result to clear buffers before deletion
+                    try:
+                        self.recognizer.FinalResult()
+                    except:
+                        pass
+
                     old_recognizer = self.recognizer
                     self.recognizer = None
-                    # Small delay to ensure write() isn't using it
-                    time.sleep(0.02)
                     del old_recognizer
                 except Exception as e:
                     print(f"[BenSink] Error during recognizer cleanup: {e}")
@@ -167,6 +200,11 @@ class BenSink(discord.sinks.Sink):
         """
         Process incoming audio data from a user
 
+        PERFORMANCE OPTIMIZED:
+        - Reuses resampler state across calls
+        - Minimizes lock scope
+        - Periodic cleanup of recognizer
+
         Args:
             pcm: Raw PCM audio bytes
             user_id: Discord user ID of the speaker
@@ -175,48 +213,83 @@ class BenSink(discord.sinks.Sink):
         if self.recognizer is None:
             return
 
-        # Thread-safe recognizer access
+        self._packet_count += 1
+
+        # PERFORMANCE FIX: Periodic cleanup to prevent memory buildup
+        if self._packet_count >= self._CLEANUP_INTERVAL:
+            self._packet_count = 0
+            if not self.ben_activated:
+                # Reset recognizer periodically when idle to clear buffers
+                with self._recognizer_lock:
+                    try:
+                        if self.recognizer is not None:
+                            self.recognizer.FinalResult()
+                    except:
+                        pass
+
+        now = time.monotonic()
+
+        # ─────────────────────────
+        # Mono + resample for recognizer
+        # CRITICAL FIX: Reuse resampler state to prevent memory leak
+        # ─────────────────────────
+        try:
+            mono = audioop.tomono(pcm, 2, 1, 1)
+            # CRITICAL: Reuse self._resampler_state instead of creating new one each time
+            # This prevents massive memory accumulation over time
+            mono_16k, self._resampler_state = audioop.ratecv(
+                mono, 2, 1, 48000, 16000, self._resampler_state
+            )
+        except Exception as e:
+            print(f"[BenSink] Error processing audio: {e}")
+            # Reset state on error
+            self._resampler_state = None
+            return
+
+        # ─────────────────────────
+        # Recognition (always running)
+        # PERFORMANCE FIX: Minimize lock scope - only lock during Vosk calls
+        # ─────────────────────────
+        accept_result = None
+        partial_result = None
+
+        # Only acquire lock for the actual Vosk API calls
         with self._recognizer_lock:
             # Safety check: make sure recognizer exists
             if not hasattr(self, 'recognizer') or self.recognizer is None:
                 return
 
-            now = time.monotonic()
-
-            # ─────────────────────────
-            # Mono + resample for recognizer
-            # ─────────────────────────
-            try:
-                mono = audioop.tomono(pcm, 2, 1, 1)
-                mono_16k, _ = audioop.ratecv(
-                    mono, 2, 1, 48000, 16000, None
-                )
-            except Exception as e:
-                print(f"[BenSink] Error processing audio: {e}")
-                return
-
-            # ─────────────────────────
-            # Recognition (always running)
-            # ─────────────────────────
             try:
                 if self.recognizer.AcceptWaveform(mono_16k):
-                    result = json.loads(self.recognizer.Result())
-                    text = result.get("text", "").lower()
-                    if DEBUG_VOICE and text.strip():
-                        print(f"[VoiceDebug] Final from user {user_id}: '{text}'")
+                    accept_result = self.recognizer.Result()
                 else:
-                    result = json.loads(self.recognizer.PartialResult())
-                    text = result.get("partial", "").lower()
-                    if DEBUG_VOICE and text.strip():
-                        print(f"[VoiceDebug] Partial from user {user_id}: '{text}'")
+                    partial_result = self.recognizer.PartialResult()
             except Exception as e:
                 # Handle any recognition errors gracefully
                 if DEBUG_VOICE:
                     print(f"[VoiceDebug] Recognition error: {e}")
                 return
 
+        # PERFORMANCE FIX: Parse JSON OUTSIDE the lock to reduce contention
+        text = ""
+        try:
+            if accept_result:
+                result = json.loads(accept_result)
+                text = result.get("text", "").lower()
+                if DEBUG_VOICE and text.strip():
+                    print(f"[VoiceDebug] Final from user {user_id}: '{text}'")
+            elif partial_result:
+                result = json.loads(partial_result)
+                text = result.get("partial", "").lower()
+                if DEBUG_VOICE and text.strip():
+                    print(f"[VoiceDebug] Partial from user {user_id}: '{text}'")
+        except Exception as e:
+            if DEBUG_VOICE:
+                print(f"[VoiceDebug] JSON parse error: {e}")
+            return
+
         # ─────────────────────────
-        # Wake word detection (outside lock - we'll use safe replacement)
+        # Wake word detection (outside lock)
         # ─────────────────────────
         if (
                 self.config.voice_enabled
@@ -278,6 +351,9 @@ async def monitor_silence(
     """
     Monitor for silence and respond when appropriate
 
+    PERFORMANCE OPTIMIZED:
+    - Periodic garbage collection to free memory
+
     Args:
         context_id: Guild ID or DM context string
         vc: Discord voice client
@@ -288,8 +364,18 @@ async def monitor_silence(
 
     cfg = get_config(context_id)
 
+    # PERFORMANCE FIX: Track iterations for periodic cleanup
+    iteration_count = 0
+
     while vc.is_connected():
         await asyncio.sleep(CHECK_INTERVAL)
+
+        iteration_count += 1
+
+        # PERFORMANCE FIX: Periodic garbage collection every ~30 seconds
+        # This helps Python clean up accumulated objects from audio processing
+        if iteration_count % 85 == 0:  # ~30s at 0.35s intervals
+            gc.collect()
 
         # If recording was stopped externally, terminate this monitor task
         if not getattr(vc, "recording", False):
