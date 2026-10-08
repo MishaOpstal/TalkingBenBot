@@ -6,16 +6,30 @@ assets/sounds/
   answers/yes.mp3      "Yes"
   answers/no.mp3       "No"
   yapping/             everything else Ben can say (ho ho ho, ugh, ...)
+
+The text Ben shows in chat for a sound comes from its file name: "hohoho.mp3" shows
+"Hohoho". Put text in square brackets to choose it yourself: "snore [Zzz...].mp3".
 """
 
 from __future__ import annotations
 
 import random
+import re
 from pathlib import Path
 
 from .guild_settings import GuildSettings
 
 AUDIO_EXTENSIONS = {".mp3", ".ogg", ".wav", ".m4a", ".flac"}
+KINDS = ("yes", "no", "yapping")
+
+
+def label(path: Path) -> str:
+    """Chat text for a sound file."""
+    match = re.search(r"\[(.+?)\]", path.stem)
+    if match:
+        return match.group(1)
+    name = re.sub(r"[_\-]+", " ", path.stem).strip()
+    return name[:1].upper() + name[1:]
 
 
 class Sounds:
@@ -33,9 +47,9 @@ class Sounds:
         return sorted(p for p in folder.iterdir() if p.suffix.lower() in AUDIO_EXTENSIONS)
 
     def _answer(self, name: str) -> Path | None:
-        for ext in AUDIO_EXTENSIONS:
-            path = self.answers_dir / f"{name}{ext}"
-            if path.is_file():
+        # "yes.mp3" or "yes [Yes!].mp3"
+        for path in self._list(self.answers_dir):
+            if re.sub(r"\s*\[.*?\]", "", path.stem).lower() == name:
                 return path
         return None
 
@@ -49,20 +63,20 @@ class Sounds:
     def yapping(self) -> list[Path]:
         return self._list(self.yapping_dir)
 
+    def pick(self, kind: str) -> Path | None:
+        """A sound of one kind: "yes", "no" or "yapping" (random one)."""
+        if kind == "yapping":
+            yaps = self.yapping()
+            return random.choice(yaps) if yaps else None
+        return self._answer(kind)
+
     def pick_answer(self, settings: GuildSettings) -> tuple[str, Path] | None:
         """Returns ("yes" | "no" | "yapping", file) using the server's chances."""
-        options: list[tuple[str, Path | None, int]] = [
-            ("yes", self._answer("yes"), settings.chance_yes),
-            ("no", self._answer("no"), settings.chance_no),
-        ]
-        yaps = self.yapping()
-        if yaps:
-            options.append(("yapping", random.choice(yaps), settings.chance_yapping))
-
-        options = [(kind, path, w) for kind, path, w in options if path is not None and w > 0]
+        weights = {"yes": settings.chance_yes, "no": settings.chance_no, "yapping": settings.chance_yapping}
+        options = [(kind, self.pick(kind), w) for kind, w in weights.items() if w > 0]
+        options = [(kind, path, w) for kind, path, w in options if path is not None]
         if not options:
             return None
-
         kind, path, _ = random.choices(options, weights=[w for _, _, w in options])[0]
         return kind, path
 

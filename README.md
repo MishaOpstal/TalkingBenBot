@@ -1,6 +1,6 @@
 # Talking Ben Bot
 
-Talking Ben in your Discord voice channel. `/call` him, say "Ben", ask a question, get a "Yes.", "No.", "Ho ho ho" or "Ugh".
+Talking Ben in your Discord voice channel. `/call` him, say "Ben", ask a question, get a "Yes.", "No.", "Ho ho ho" or "Ugh". He also answers in text chat.
 
 ## Setup
 
@@ -17,18 +17,23 @@ The speech model (~40 MB) downloads by itself the first time.
 
 | Command | Who | What |
 |---|---|---|
-| `/call` | everyone | Ben joins your voice channel |
-| `/hangup` | everyone | Ben leaves |
-| `/ask question` | everyone | Ben answers out loud in the call, or with a sound file if he isn't in one |
+| `/call` | everyone | Ben joins your voice channel (unless he's not in the mood) |
+| `/hangup` | everyone | Ben leaves (unless he refuses) |
+| `/ask question` | everyone, also in DMs | Ben answers out loud in the call, or with a sound file if he isn't in one |
+| `/say yes/no/yapping` | everyone, also in DMs | Make Ben say that |
 | `/settings show` | Manage Server | See everything below |
 | `/settings listening` | Manage Server | Voice on/off. Off = only `/ask` works |
 | `/settings mode` | Manage Server | `name`: say "Ben" first. `always`: answers whatever anyone says, like the app |
 | `/settings strictness` | Manage Server | How picky he is about hearing "Ben" (see below) |
 | `/settings answer-delay` | Manage Server | Seconds of silence before he answers (default 0.8) |
 | `/settings answers` | Manage Server | Chances for yes / no / yapping (default 40 / 40 / 20) |
+| `/settings chat` | Manage Server | Text chat answers on/off |
+| `/settings phone` | Manage Server | % chance he ignores a `/call` or refuses a `/hangup` (default 5 / 5). Refusing kicks you from voice if he has **Move Members** |
 | `/settings reset` | Manage Server | Back to defaults |
 
-Ben hangs up by himself when everyone leaves.
+In text chat Ben answers when you @mention him, reply to one of his messages, or DM him. With `READ_CHAT=true` he also answers any message with "Ben" in it.
+
+Ben hangs up by himself when everyone leaves, and picks the call back up by himself after a restart.
 
 ### Ben doesn't hear you, or hears things that aren't there
 
@@ -49,11 +54,14 @@ Want to check how well he understands *your* voice? Record yourself a few times 
 | `DISCORD_TOKEN` | | required |
 | `SPEECH_MODEL` | `nl` | `nl`, `en`, or a path to a Vosk model folder |
 | `DEV_GUILD_ID` | | Test server ID: command changes show up there instantly |
+| `READ_CHAT` | `false` | `true`: answer every chat message containing "Ben". Needs **Message Content Intent** on in the developer portal |
 | `LOG_LEVEL` | `INFO` | `DEBUG` for more detail |
 
 ## Sounds
 
 `assets/sounds/`: `telephone/call/` plays in name order on `/call`, one random `telephone/hang_up/` file on hang up, `answers/yes.mp3` + `answers/no.mp3`, and anything in `yapping/`. Drop in more yapping files whenever; with Docker the folder is mounted, so a restart is enough.
+
+The chat text for a sound is its file name (`hohoho.mp3` shows "Hohoho"). Want different text? Put it in square brackets: `sleeping [Zzz...].mp3`.
 
 ## How it works
 

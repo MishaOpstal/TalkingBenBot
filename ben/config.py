@@ -30,6 +30,7 @@ class BotConfig:
     sounds_dir: Path
     dev_guild_id: int | None
     log_level: str
+    read_chat: bool
 
 
 def _env(name: str, default: str = "") -> str:
@@ -58,4 +59,5 @@ def load_config() -> BotConfig:
         sounds_dir=Path(_env("SOUNDS_DIR", str(ROOT / "assets" / "sounds"))),
         dev_guild_id=int(dev_guild) if dev_guild else None,
         log_level=(_env("LOG_LEVEL", "INFO") or "INFO").upper(),
+        read_chat=_env("READ_CHAT", "false").lower() in ("1", "true", "yes", "on"),
     )

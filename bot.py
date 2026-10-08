@@ -23,11 +23,14 @@ log = logging.getLogger("ben")
 INVITE_PERMISSIONS = discord.Permissions(
     view_channel=True,
     send_messages=True,
+    embed_links=True,
     attach_files=True,
+    read_message_history=True,  # to see when you reply to Ben
     connect=True,
     speak=True,
     use_voice_activation=True,
     mute_members=True,  # only to become a speaker in Stage channels
+    move_members=True,  # only for kicking people who try to hang up on Ben (/settings phone)
     request_to_speak=True,
 )
 
@@ -88,28 +91,40 @@ def main() -> int:
     store = SettingsStore(config.data_dir)
     calls = CallManager(speech, store, sounds)
 
+    intents = discord.Intents.default()  # guilds, voice states, messages; no privileged intents needed
+    # READ_CHAT=true: also answer any message saying "Ben". Needs "Message Content Intent"
+    # switched on in the developer portal (Bot page).
+    intents.message_content = config.read_chat
+
     bot = discord.Bot(
-        intents=discord.Intents.default(),  # guilds + voice states, no privileged intents needed
+        intents=intents,
         debug_guilds=[config.dev_guild_id] if config.dev_guild_id else None,
         activity=discord.CustomActivity("☎️ /call me"),
     )
-    bot.add_cog(BenCommands(bot, calls, store, sounds))
+    bot.add_cog(BenCommands(bot, calls, store, sounds, read_chat=config.read_chat))
 
     @bot.event
     async def on_ready():
-        # Leftover voice connections from before a restart
-        for guild in bot.guilds:
-            if guild.voice_client and calls.get(guild.id) is None:
-                try:
-                    await guild.voice_client.disconnect(force=True)
-                except Exception:
-                    pass
         log.info("Logged in as %s in %d server(s)", bot.user, len(bot.guilds))
         log.info(
             "Invite link: %s",
             discord.utils.oauth_url(bot.user.id, permissions=INVITE_PERMISSIONS,
                                     scopes=("bot", "applications.commands")),
         )
+        # After a restart Ben may still be sitting in a channel: pick the call back up quietly
+        for guild in bot.guilds:
+            channel = guild.me.voice.channel if guild.me and guild.me.voice else None
+            if channel is None or calls.get(guild.id) is not None:
+                continue
+            async with calls.lock(guild.id):
+                try:
+                    if any(not m.bot for m in channel.members):
+                        await calls.start(channel, ring=False)
+                        log.info("Rejoined call in %s / %s", guild.name, channel.name)
+                    elif guild.voice_client:
+                        await guild.voice_client.disconnect(force=True)
+                except Exception:
+                    log.exception("Couldn't rejoin the call in %s", guild.name)
 
     @bot.event
     async def on_voice_state_update(member: discord.Member, before, after):
@@ -139,6 +154,10 @@ def main() -> int:
         bot.run(config.token)
     except discord.LoginFailure:
         log.error("Discord rejected DISCORD_TOKEN. Reset the token in the developer portal and paste the new one.")
+        return 1
+    except discord.PrivilegedIntentsRequired:
+        log.error("READ_CHAT=true needs \"Message Content Intent\" switched on in the developer portal "
+                  "(your app -> Bot). Switch it on or set READ_CHAT=false.")
         return 1
     return 0
 

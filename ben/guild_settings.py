@@ -37,6 +37,12 @@ class GuildSettings:
     chance_yes: int = 40
     chance_no: int = 40
     chance_yapping: int = 20
+    # Ben answers in text chat when you @mention him or reply to him.
+    chat: bool = True
+    # Percent chance Ben doesn't pick up when you /call him.
+    ignore_call_chance: int = 5
+    # Percent chance Ben refuses to be hung up on (says "no" and kicks you from the call).
+    refuse_hangup_chance: int = 5
 
     def chances_percent(self) -> tuple[float, float, float]:
         total = self.chance_yes + self.chance_no + self.chance_yapping

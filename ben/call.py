@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 import discord
 
@@ -41,11 +42,12 @@ class Call:
         self.ended = False
 
     # ───────── lifecycle ─────────
-    async def start(self) -> None:
-        async with self._talk_lock:
-            self.conversation.busy = True
-            await playback.play_sequence(self.vc, self.sounds.call_sequence())
-            self.conversation.ben_done_talking()
+    async def start(self, *, ring: bool = True) -> None:
+        if ring:
+            async with self._talk_lock:
+                self.conversation.busy = True
+                await playback.play_sequence(self.vc, self.sounds.call_sequence())
+                self.conversation.ben_done_talking()
         self.start_listening()
         self._watchdog = asyncio.create_task(self._watch(), name=f"ben-watchdog-{self.guild_id}")
 
@@ -106,19 +108,23 @@ class Call:
         # called from the listener thread
         self.loop.call_soon_threadsafe(lambda: asyncio.create_task(self.answer()))
 
-    async def answer(self) -> str | None:
-        """Ben gives a random answer. Returns "yes", "no" or "yapping"."""
-        if self.ended:
-            return None
+    async def answer(self) -> tuple[str, Path] | None:
+        """Ben gives a random answer. Returns ("yes" | "no" | "yapping", file)."""
+        picked = self.sounds.pick_answer(self.settings.get(self.guild_id))
+        if picked is not None:
+            await self.say(picked[1])
+        else:
+            self.conversation.ben_done_talking()
+        return picked
+
+    async def say(self, path: Path | None) -> None:
+        """Ben plays one sound; nobody can call his name while he talks."""
+        if self.ended or path is None:
+            return
         async with self._talk_lock:
             self.conversation.busy = True
             try:
-                picked = self.sounds.pick_answer(self.settings.get(self.guild_id))
-                if picked is None:
-                    return None
-                kind, path = picked
                 await playback.play(self.vc, path)
-                return kind
             finally:
                 self.conversation.ben_done_talking()
 
@@ -131,14 +137,19 @@ class CallManager:
         self.settings = settings
         self.sounds = sounds
         self.calls: dict[int, Call] = {}
+        self._locks: dict[int, asyncio.Lock] = {}
 
-    def get(self, guild_id: int) -> Call | None:
-        call = self.calls.get(guild_id)
+    def lock(self, guild_id: int) -> asyncio.Lock:
+        """Held while Ben is joining or leaving, so two /call's can't trip over each other."""
+        return self._locks.setdefault(guild_id, asyncio.Lock())
+
+    def get(self, guild_id: int | None) -> Call | None:
+        call = self.calls.get(guild_id) if guild_id else None
         if call and (call.ended or not call.vc.is_connected()):
             return None
         return call
 
-    async def start(self, channel: discord.VoiceChannel | discord.StageChannel) -> Call:
+    async def start(self, channel: discord.VoiceChannel | discord.StageChannel, *, ring: bool = True) -> Call:
         guild = channel.guild
         await self.end(guild.id, play_sound=False)
 
@@ -155,7 +166,7 @@ class CallManager:
             await playback.become_speaker(guild)
 
         call = self.calls[guild.id] = Call(vc, self.speech, self.settings, self.sounds)
-        await call.start()
+        await call.start(ring=ring)
         return call
 
     async def end(self, guild_id: int, *, play_sound: bool = True) -> bool:

@@ -1,29 +1,48 @@
-"""Slash commands.
+"""Slash commands and chat replies.
 
-/call /hangup /ask       everyone
-/settings ...            people with "Manage Server"
+/call /hangup /ask /say   everyone (/ask and /say also work in DMs)
+/settings ...             people with "Manage Server"
+@Ben, replies to Ben, DMs Ben answers in chat
 """
 
 from __future__ import annotations
 
 import logging
+import random
+import re
+from pathlib import Path
 
 import discord
 from discord.ext import commands
 
 from .call import CallManager
 from .guild_settings import STRICTNESS, WAKE_MODES, GuildSettings, SettingsStore
-from .sounds import Sounds
+from .sounds import Sounds, label
 
 log = logging.getLogger("ben.commands")
 
-ANSWER_TEXT = {"yes": "🟢 Yes.", "no": "🔴 No.", "yapping": "💬 *Ben is yapping*"}
 GUILD_ONLY = {discord.InteractionContextType.guild}
+GUILD_AND_DM = {discord.InteractionContextType.guild, discord.InteractionContextType.bot_dm}
+CHAT_MESSAGE_TYPES = {discord.MessageType.default, discord.MessageType.reply}
+BEN_WORD = re.compile(r"\bBen\b")
+
+GREEN = discord.Colour.green()
+RED = discord.Colour.red()
+ORANGE = discord.Colour.orange()
+BROWN = discord.Colour(0x8B5A2B)
+
+
+def answer_text(kind: str, path: Path) -> str:
+    if kind == "yes":
+        return f"🟢 {label(path)}."
+    if kind == "no":
+        return f"🔴 {label(path)}."
+    return f"💬 *{label(path)}*"
 
 
 def settings_embed(s: GuildSettings, guild: discord.Guild) -> discord.Embed:
     yes, no, yap = s.chances_percent()
-    e = discord.Embed(title="☎️ Talking Ben settings", colour=0x8B5A2B)
+    e = discord.Embed(title="☎️ Talking Ben settings", colour=BROWN)
     e.add_field(
         name="👂 Listening",
         value=("**On**: Ben listens in calls." if s.listening else "**Off**: Ben only answers `/ask`.")
@@ -51,6 +70,18 @@ def settings_embed(s: GuildSettings, guild: discord.Guild) -> discord.Embed:
         value=f"🟢 Yes **{yes:.0f}%** · 🔴 No **{no:.0f}%** · 💬 Yapping **{yap:.0f}%**\n`/settings answers`",
         inline=False,
     )
+    e.add_field(
+        name="💬 Chat",
+        value=("**On**: answers when you @mention him or reply to him." if s.chat else "**Off**")
+        + "\n`/settings chat`",
+        inline=False,
+    )
+    e.add_field(
+        name="📵 Moody phone",
+        value=f"Ignores a `/call`: **{s.ignore_call_chance}%** · "
+        f"Refuses a `/hangup`: **{s.refuse_hangup_chance}%**\n`/settings phone`",
+        inline=False,
+    )
     e.set_footer(text=guild.name)
     return e
 
@@ -63,11 +94,34 @@ class BenCommands(commands.Cog):
         contexts=GUILD_ONLY,
     )
 
-    def __init__(self, bot: discord.Bot, calls: CallManager, store: SettingsStore, sounds: Sounds):
+    def __init__(
+        self,
+        bot: discord.Bot,
+        calls: CallManager,
+        store: SettingsStore,
+        sounds: Sounds,
+        *,
+        read_chat: bool = False,
+    ):
         self.bot = bot
         self.calls = calls
         self.store = store
         self.sounds = sounds
+        self.read_chat = read_chat
+
+    # ───────── helpers ─────────
+    def _settings(self, guild_id: int | None) -> GuildSettings:
+        return self.store.get(guild_id) if guild_id else GuildSettings()
+
+    def _embed(self, text: str, colour: discord.Colour = BROWN) -> discord.Embed:
+        e = discord.Embed(description=text, colour=colour)
+        me = self.bot.user
+        e.set_author(name="Talking Ben", icon_url=me.display_avatar.url if me else None)
+        return e
+
+    @staticmethod
+    def _rolled(percent: int) -> bool:
+        return percent > 0 and random.random() * 100 < percent
 
     # ───────── calls ─────────
     @discord.slash_command(description="Call Talking Ben into your voice channel", contexts=GUILD_ONLY)
@@ -89,49 +143,143 @@ class BenCommands(commands.Cog):
             )
             return
 
-        await ctx.defer(ephemeral=True)
-        try:
-            await self.calls.start(voice.channel)
-        except Exception as exc:
-            log.exception("Call failed")
-            await ctx.followup.send(f"📵 Couldn't call Ben: `{exc}`", ephemeral=True)
+        lock = self.calls.lock(ctx.guild_id)
+        if lock.locked():
+            await ctx.respond("Ben is busy with the phone, try again in a second.", ephemeral=True)
             return
 
-        s = self.store.get(ctx.guild_id)
+        s = self._settings(ctx.guild_id)
+        if self._rolled(s.ignore_call_chance):
+            await ctx.respond(embed=self._embed(
+                f"📵 {ctx.author.mention} tried to call Ben, but he didn't pick up.", RED))
+            return
+
+        await ctx.defer()
+        async with lock:
+            try:
+                await self.calls.start(voice.channel)
+            except Exception as exc:
+                log.exception("Call failed")
+                await ctx.followup.send(f"📵 Couldn't call Ben: `{exc}`", ephemeral=True)
+                return
+
         if not s.listening:
             how = "He isn't listening to voice right now (`/settings listening`), use `/ask`."
         elif s.wake_mode == "name":
             how = "Say **\"Ben\"** and ask him something."
         else:
             how = "Just ask him something."
-        await ctx.followup.send(f"📞 Ben picked up. {how}", ephemeral=True)
+        await ctx.followup.send(embed=self._embed(f"📞 {ctx.author.mention} called Ben! {how}", GREEN))
 
     @discord.slash_command(description="Hang up on Talking Ben", contexts=GUILD_ONLY)
     async def hangup(self, ctx: discord.ApplicationContext):
-        await ctx.defer(ephemeral=True)
-        ended = await self.calls.end(ctx.guild_id)
-        if not ended and ctx.guild.voice_client:
-            # Ben is in a channel we lost track of (e.g. after a restart)
-            await ctx.guild.voice_client.disconnect(force=True)
-            ended = True
-        await ctx.followup.send("☎️ Ben hung up." if ended else "Ben isn't on a call.", ephemeral=True)
+        call = self.calls.get(ctx.guild_id)
+        if call is None:
+            if ctx.guild.voice_client:  # Ben is in a channel we lost track of
+                await ctx.guild.voice_client.disconnect(force=True)
+                await ctx.respond("☎️ Ben hung up.", ephemeral=True)
+            else:
+                await ctx.respond("Ben isn't on a call.", ephemeral=True)
+            return
 
-    @discord.slash_command(description="Ask Talking Ben a question", contexts=GUILD_ONLY)
-    @discord.option("question", str, description="What do you want to ask Ben?", max_length=200)
-    async def ask(self, ctx: discord.ApplicationContext, question: str):
+        lock = self.calls.lock(ctx.guild_id)
+        if lock.locked():
+            await ctx.respond("Ben is busy with the phone, try again in a second.", ephemeral=True)
+            return
+
+        await ctx.defer()
+        async with lock:
+            if self._rolled(self._settings(ctx.guild_id).refuse_hangup_chance):
+                await call.say(self.sounds.pick("no"))
+                text = f"📞 {ctx.author.mention} tried to hang up on Ben. Ben did not like that."
+                voice = ctx.author.voice if isinstance(ctx.author, discord.Member) else None
+                if voice and voice.channel == call.vc.channel and ctx.guild.me.guild_permissions.move_members:
+                    try:
+                        await ctx.author.move_to(None, reason="Tried to hang up on Ben")
+                        text += " Bye."
+                    except discord.HTTPException:
+                        pass
+                await ctx.followup.send(embed=self._embed(text, RED))
+                return
+
+            await self.calls.end(ctx.guild_id)
+        await ctx.followup.send(embed=self._embed(f"☎️ {ctx.author.mention} hung up on Ben.", ORANGE))
+
+    # ───────── answers ─────────
+    async def _reply_with(self, ctx: discord.ApplicationContext, kind: str, path: Path, question: str | None):
+        text = answer_text(kind, path)
+        if question:
+            who = f"{ctx.author.mention}: " if ctx.guild else ""
+            text = f"{who}**{question}**\n\n{text}"
+
         call = self.calls.get(ctx.guild_id)
         if call:
             await ctx.defer()
-            kind = await call.answer()
-            await ctx.followup.send(f"> {question}\n{ANSWER_TEXT.get(kind, '...')}")
-            return
+            await call.say(path)
+            await ctx.followup.send(embed=self._embed(text))
+        else:
+            # not in a call: send the sound along so you can still hear him
+            await ctx.respond(embed=self._embed(text), file=discord.File(path))
 
-        picked = self.sounds.pick_answer(self.store.get(ctx.guild_id))
+    @discord.slash_command(description="Ask Talking Ben a question", contexts=GUILD_AND_DM)
+    @discord.option("question", str, description="What do you want to ask Ben?", max_length=200)
+    async def ask(self, ctx: discord.ApplicationContext, question: str):
+        picked = self.sounds.pick_answer(self._settings(ctx.guild_id))
         if picked is None:
             await ctx.respond("Ben has no sounds to answer with.", ephemeral=True)
             return
+        await self._reply_with(ctx, *picked, question)
+
+    @discord.slash_command(description="Make Talking Ben say something specific", contexts=GUILD_AND_DM)
+    @discord.option("what", str, description="What Ben says", choices=["yes", "no", "yapping"])
+    async def say(self, ctx: discord.ApplicationContext, what: str):
+        path = self.sounds.pick(what)
+        if path is None:
+            await ctx.respond(f"Ben has no '{what}' sound.", ephemeral=True)
+            return
+        await self._reply_with(ctx, what, path, None)
+
+    # ───────── chat ─────────
+    async def _is_reply_to_me(self, message: discord.Message) -> bool:
+        ref = message.reference
+        if ref is None or ref.message_id is None:
+            return False
+        author = getattr(ref.resolved, "author", None)  # resolved can also be a deleted message
+        if author is None and ref.resolved is None:
+            try:
+                author = (await message.channel.fetch_message(ref.message_id)).author
+            except discord.HTTPException:
+                return False
+        return author is not None and author.id == self.bot.user.id
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if message.author.bot or message.type not in CHAT_MESSAGE_TYPES:
+            return
+
+        if message.guild is not None:
+            s = self.store.get(message.guild.id)
+            if not s.chat:
+                return
+            talking_to_ben = (
+                self.bot.user in message.mentions
+                or (self.read_chat and BEN_WORD.search(message.content or ""))
+                or await self._is_reply_to_me(message)
+            )
+            if not talking_to_ben:
+                return
+        else:
+            s = GuildSettings()  # DMs: always answer, default chances
+
+        picked = self.sounds.pick_answer(s)
+        if picked is None:
+            return
         kind, path = picked
-        await ctx.respond(f"> {question}\n{ANSWER_TEXT[kind]}", file=discord.File(path))
+
+        await message.reply(answer_text(kind, path), mention_author=False)
+        call = self.calls.get(message.guild.id) if message.guild else None
+        if call:
+            await call.say(path)
 
     # ───────── settings ─────────
     async def _show(self, ctx: discord.ApplicationContext, s: GuildSettings, note: str | None = None):
@@ -196,6 +344,31 @@ class BenCommands(commands.Cog):
         note = "✅ Updated."
         if sum(new.values()) != 100:
             note += " (They don't add up to 100, so they're scaled: what you see below is what you get.)"
+        await self._show(ctx, s, note)
+
+    @settings_group.command(name="chat", description="Should Ben answer in text chat?")
+    @discord.option("enabled", bool, description="On: Ben answers when you @mention him or reply to him")
+    async def settings_chat(self, ctx: discord.ApplicationContext, enabled: bool):
+        s = self.store.update(ctx.guild_id, chat=enabled)
+        await self._show(ctx, s, f"✅ Chat answers are now **{'on' if enabled else 'off'}**.")
+
+    @settings_group.command(name="phone", description="How moody Ben is about the phone")
+    @discord.option("ignore_calls", int, description="% chance Ben doesn't pick up a /call (default 5)",
+                    min_value=0, max_value=100, required=False)
+    @discord.option("refuse_hangups", int,
+                    description="% chance Ben refuses /hangup, says no and kicks you from voice (default 5)",
+                    min_value=0, max_value=100, required=False)
+    async def settings_phone(self, ctx: discord.ApplicationContext,
+                             ignore_calls: int | None = None, refuse_hangups: int | None = None):
+        changes = {}
+        if ignore_calls is not None:
+            changes["ignore_call_chance"] = ignore_calls
+        if refuse_hangups is not None:
+            changes["refuse_hangup_chance"] = refuse_hangups
+        s = self.store.update(ctx.guild_id, **changes) if changes else self.store.get(ctx.guild_id)
+        note = "✅ Updated."
+        if s.refuse_hangup_chance and not ctx.guild.me.guild_permissions.move_members:
+            note += " (Ben needs the **Move Members** permission to kick people, without it he only says no.)"
         await self._show(ctx, s, note)
 
     @settings_group.command(name="reset", description="Put every setting back to default")
