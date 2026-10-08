@@ -1,0 +1,3 @@
+# Only for testing/audio_only_ben.py (plays Ben locally with hotkeys)
+pygame
+keyboard

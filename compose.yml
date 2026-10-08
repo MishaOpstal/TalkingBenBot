@@ -1,15 +1,12 @@
 services:
   talking-ben:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
     image: talking-ben-bot
     container_name: talking-ben
     restart: unless-stopped
-
-    env_file:
-      - .env
-
+    env_file: .env
     volumes:
-      - ./assets:/app/assets:ro
-      - ./data:/app/data
+      - ./data:/app/data          # per-server settings (guilds.json)
+      - ./models:/app/models      # speech model, downloaded on first start
+      - ./assets:/app/assets:ro   # swap sounds without rebuilding
+    mem_limit: 512m

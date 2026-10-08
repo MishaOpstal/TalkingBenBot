@@ -1,16 +1,17 @@
 # Environment
 .env
-.venv
+.venv/
+venv/
 
-# Voice models
-models/**
+# Speech models (downloaded automatically)
+models/
 
 # Python
-__pycache__/**
+__pycache__/
 
 # IDE
-.vscode/**
-.idea/**
+.vscode/
+.idea/
 
 # Data
-data/**
+data/
