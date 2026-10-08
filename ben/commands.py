@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import logging
 import random
-import re
 from pathlib import Path
 
 import discord
 from discord.ext import commands
 
+from .ben_grammar import guess as meant_for_ben
 from .call import CallManager
 from .guild_settings import STRICTNESS, WAKE_MODES, GuildSettings, SettingsStore
 from .sounds import Sounds, label
@@ -24,7 +24,6 @@ log = logging.getLogger("ben.commands")
 GUILD_ONLY = {discord.InteractionContextType.guild}
 GUILD_AND_DM = {discord.InteractionContextType.guild, discord.InteractionContextType.bot_dm}
 CHAT_MESSAGE_TYPES = {discord.MessageType.default, discord.MessageType.reply}
-BEN_WORD = re.compile(r"\bBen\b")
 
 GREEN = discord.Colour.green()
 RED = discord.Colour.red()
@@ -263,7 +262,7 @@ class BenCommands(commands.Cog):
                 return
             talking_to_ben = (
                 self.bot.user in message.mentions
-                or (self.read_chat and BEN_WORD.search(message.content or ""))
+                or (self.read_chat and meant_for_ben(message.content or ""))
                 or await self._is_reply_to_me(message)
             )
             if not talking_to_ben:

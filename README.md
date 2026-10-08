@@ -31,7 +31,7 @@ The speech model (~40 MB) downloads by itself the first time.
 | `/settings phone` | Manage Server | % chance he ignores a `/call` or refuses a `/hangup` (default 5 / 5). Refusing kicks you from voice if he has **Move Members** |
 | `/settings reset` | Manage Server | Back to defaults |
 
-In text chat Ben answers when you @mention him, reply to one of his messages, or DM him. With `READ_CHAT=true` he also answers any message with "Ben" in it.
+In text chat Ben answers when you @mention him, reply to one of his messages, or DM him. With `READ_CHAT=true` he also answers messages that talk to him without a ping ("ben denk jij dat...", "dat vindt ben ook toch ben?"), while "ik ben moe" or "ben je thuis?" leave him alone. A set of Dutch grammar rules decides that in a few microseconds (`ben/ben_grammar.py`).
 
 Ben hangs up by himself when everyone leaves, and picks the call back up by himself after a restart.
 
@@ -54,7 +54,7 @@ Want to check how well he understands *your* voice? Record yourself a few times 
 | `DISCORD_TOKEN` | | required |
 | `SPEECH_MODEL` | `nl` | `nl`, `en`, or a path to a Vosk model folder |
 | `DEV_GUILD_ID` | | Test server ID: command changes show up there instantly |
-| `READ_CHAT` | `false` | `true`: answer every chat message containing "Ben". Needs **Message Content Intent** on in the developer portal |
+| `READ_CHAT` | `false` | `true`: also answer messages talking to Ben without a ping. Needs **Message Content Intent** on in the developer portal |
 | `LOG_LEVEL` | `INFO` | `DEBUG` for more detail |
 
 ## Sounds

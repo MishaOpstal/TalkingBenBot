@@ -1,0 +1,192 @@
+"""Checks the "is this chat message meant for Ben?" rules.
+
+    python testing/test_ben_grammar.py      (or: pytest testing)
+
+Found a message Ben gets wrong? Add it to the right list and tweak ben/ben_grammar.py.
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from ben.ben_grammar import guess  # noqa: E402
+
+MEANT_FOR_BEN = [
+    'Ben denk jij dat Robin raar doet?',
+    'Natuurlijk heb ik gelijk dat vindt ben ook toch ben?',
+    'ben is pizza lekker',
+    'Ben, ben je gek?',
+    'hey ben ben jij een hond',
+    'ben zeg eens wat',
+    'ben heeft robin gelijk of niet',
+    'yo ben',
+    'ben?',
+    'wat vind jij ervan ben',
+    'toch ben?',
+    'klopt dat ben',
+    'ben moet ik naar huis gaan',
+    'Ben, mag ik een koekje?',
+    'ben is misha cool',
+    'eens kijken wat ben ervan vindt',
+    'laten we het aan ben vragen',
+    'ben gaat robin winnen vanavond',
+    'Ben what do you think',
+    'is that true ben',
+    'ben do you like bones',
+    'BEN',
+    'ben ben ben',
+    'oke ben, ja of nee?',
+    'ben zou jij dit kopen',
+    'vraag het maar aan ben',
+    'ben wil jij ook pizza',
+    'hoi ben',
+    'Ben, ga je mee?',
+    'ben kan robin goed koken',
+    'ben wordt het morgen mooi weer',
+    'zeg ben, is dit spel goed',
+    'ben ik heb een vraag',
+    'ben wat vind jij van mijn nieuwe skin',
+    'Ben is dit een goed idee?',
+    'hallo ben hoe gaat het',
+    'ben bent u daar',
+    'goeiemorgen ben',
+    'ben zeg jij het maar',
+    'wat zou ben hiervan zeggen',
+    'ben?? hallo??',
+    'ok ben laatste vraag',
+    'ben gaan we vandaag winnen',
+    'ik vraag het gewoon aan ben',
+    'ben jij bent echt de beste',
+    'he ben',
+    'is het waar ben',
+    'ben vind jij robin ook irritant',
+    'ben, ik heb honger',
+    'Ben moeten we stoppen?',
+    'ben hou je van katten',
+    'Ben ja of nee: pizza met ananas',
+    'ben ben je wakker',
+    'dankjewel ben',
+    'ben weet jij het antwoord',
+    'ben is robin een noob',
+    'Ben, heb ik gelijk of niet?',
+    'hey Ben, do you like cheese',
+    'ben can you hear me',
+    'are you there ben',
+    'ben speel jij ook fortnite',
+    'wacht ben moet nog antwoorden',
+    'ben kom op zeg iets',
+    'ben mijn moeder vindt dat ik moet stoppen',
+    'ben robin zegt dat jij een hond bent',
+    'ben pizza of patat',
+    'ben welke kleur is beter',
+    'ben morgen of overmorgen',
+    'ben links of rechts',
+    'ben 1 of 2',
+    'ben goed of slecht',
+    'ben help',
+    'ben robin of misha',
+]
+
+NOT_FOR_BEN = [
+    'Ik ben Misha',
+    'Ben jij helemaal gek ofzo',
+    'ik ben zo moe',
+    'ben je er vanavond?',
+    'ben jij ook online',
+    'ik ben er over 5 min',
+    'waar ben je',
+    'ben ik de enige die dit raar vindt',
+    'daar ben ik het niet mee eens',
+    'ben zo terug',
+    'ben even afk',
+    'ben al thuis',
+    'ben er bijna',
+    'ik ben het met je eens',
+    'nee ik ben niet boos',
+    'hoe laat ben je thuis',
+    'ben benieuwd wat robin zegt',
+    'ik ben gewoon aan het gamen',
+    'zo dan ben ik klaar',
+    'ben ik nou gek of',
+    'wie ben jij eigenlijk',
+    'ik ben er klaar mee',
+    'ben moe',
+    'ben gestopt met dat spel',
+    'ben je gek geworden?',
+    'Big Ben is in London',
+    'ben stiller is echt een goede acteur',
+    'ik ben om 8 uur online',
+    'ben net wakker',
+    'jij bent gek en ik ben gek',
+    'ben jij die gast van gisteren?',
+    'ben ff weg',
+    'ik ben er zo',
+    'ben zo back',
+    'ben je klaar?',
+    'ben aan het eten',
+    'ben op school',
+    'ik ben het niet eens met robin',
+    'waarom ben je zo boos',
+    'ben jij ook zo moe',
+    'ben nu online',
+    'ben bijna thuis',
+    'weet jij waar ik ben',
+    'ben ik de enige die lagt?',
+    'ik ben benieuwd',
+    'ben eventjes weg',
+    'ben vergeten te eten',
+    'ik ben helemaal kapot',
+    'dan ben je te laat',
+    'ben je nou serieus',
+    'als ik thuis ben bel ik je',
+    'ben gisteren naar de film geweest',
+    'ik weet niet of ik er ben',
+    'ben je al begonnen',
+    'nu ben ik wakker',
+    'ben echt slecht in dit spel',
+    'ben om 9 uur thuis',
+    'wanneer ben jij jarig',
+    'ik ben er ook bij',
+    'ben wel benieuwd eigenlijk',
+    'ben je mee of niet',
+    'hoe oud ben je',
+    'ben mijn telefoon kwijt',
+    'ben vergeten wat ik wilde zeggen',
+    'ben jarig vandaag',
+    'ben er zo',
+    'ben lekker aan het chillen',
+    'ben verliefd',
+    'ben verslaafd aan dit spel',
+    'ben kwijt waar ik was',
+    'ben benieuwd',
+    'ben vrij morgen',
+    'ben een beetje ziek',
+    'ben fan van dit nummer',
+    'ben weer terug',
+    'ben hard aan het werk',
+    'ben stuk',
+    'ben mijn sleutels kwijt',
+    'ben pas om 10 thuis',
+    'ben gaming',
+    'ben 10 is een goeie serie',
+    'ben wakker geworden om 6',
+]
+
+
+def test_meant_for_ben():
+    wrong = [m for m in MEANT_FOR_BEN if guess(m) is not True]
+    assert not wrong, wrong
+
+
+def test_not_for_ben():
+    wrong = [m for m in NOT_FOR_BEN if guess(m) is True]
+    assert not wrong, wrong
+
+
+if __name__ == "__main__":
+    bad = [("should answer", m) for m in MEANT_FOR_BEN if guess(m) is not True]
+    bad += [("should ignore", m) for m in NOT_FOR_BEN if guess(m) is True]
+    for why, m in bad:
+        print(f"{why}: {m}")
+    print(f"{len(MEANT_FOR_BEN) + len(NOT_FOR_BEN) - len(bad)}/{len(MEANT_FOR_BEN) + len(NOT_FOR_BEN)} correct")
